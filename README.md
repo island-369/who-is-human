@@ -27,14 +27,54 @@
 - **后端**：N 个带独立 persona 的 LLM 调用 + 投票状态机
 - **关键提示词约束**：AI 绝不承认自己是 AI；系统提示压死"AI 自觉"；发言风格按难度分级注入
 
-## 项目结构（随开发更新）
+## 项目结构
 
 ```
 who-is-human/
-├── README.md
-├── docs/          # 设计文档
-└── (待补)
+├── server/            # 零依赖 Node.js 后端（node server/index.js 即可运行）
+│   ├── index.js       # HTTP 服务：静态页面 + 游戏 API
+│   ├── game.js        # 状态机：聊天→投票→放逐→下一轮→终局；时序拟人调度
+│   ├── personas.js    # 5 个 AI 群友人设 + 难度分级风格 + 每轮话题（人类暴露题）
+│   ├── prompts.js     # 提示词：伪装发言 / 投票决策 / 质询应答（含"绝不承认是AI"铁律）
+│   └── llm.js         # OpenAI 兼容客户端 + mock 引擎（无 key 可玩）
+├── public/            # 前端：群聊 UI（消息流 / 打字指示 / 唱票动画 / 质询弹窗 / 结算）
+├── scripts/
+│   └── e2e.mjs        # 端到端流程验证脚本（22 项断言全通过）
+└── README.md
 ```
+
+## 运行
+
+```bash
+# mock 模式（无需任何 API key，AI 发言为内置脚本，用于体验流程）
+node server/index.js          # 打开 http://localhost:3690
+
+# 接入真实 LLM（任意 OpenAI 兼容接口：DeepSeek / GLM / Kimi / OpenAI …）
+LLM_BASE_URL=https://api.deepseek.com/v1 \
+LLM_API_KEY=sk-xxx \
+LLM_MODEL=deepseek-chat \
+node server/index.js
+
+# 快速跑通整局流程的自动化验证（延迟×0.2 加速）
+MOCK=1 TIMESCALE=0.2 node server/index.js &
+node scripts/e2e.mjs
+```
+
+环境变量速查：
+
+| 变量 | 作用 | 默认 |
+| --- | --- | --- |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | OpenAI 兼容接口三件套，缺一则进 mock | 空 |
+| `MOCK=1` | 强制 mock 模式 | 自动 |
+| `TIMESCALE` | 全局延迟缩放（测试提速） | 1 |
+| `PORT` | 端口 | 3690 |
+
+## 游戏规则（当前实现）
+
+- 6 人局：1 玩家 + 5 AI（每局从人设库随机抽取）；难度三档对应不同伪装水平。
+- 每轮：话题闲聊（AI 带打字延迟、撤回等拟人时序）→ 玩家发起投票 → AI 各自投票（唱票逐条亮出+理由，玩家压轴）→ 最高票放逐并揭示身份；平票无人出局，连续两轮平票则抽签放逐。
+- 玩家有 2 次「质询」：点名某群友立刻回答问题——AI 作答时看不到自己的历史发言，答非所问或前后矛盾就是马脚。
+- 玩家被放逐 → AI 胜；找出全部 AI → 人类胜，终局全员亮身份。
 
 ## 参考
 

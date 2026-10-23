@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>谁是AI？· Who is Human</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <div class="phone">
+      <header id="chatHeader" class="hidden">
+        <div class="h-left"><span class="group-name">周末搭子群</span><span id="aliveInfo" class="alive-info"></span></div>
+        <div class="h-right"><span id="roundChip" class="chip"></span><span id="mockBadge" class="chip mock hidden">MOCK</span></div>
+      </header>
+
+      <div id="membersStrip" class="members-strip hidden"></div>
+
+      <main id="chatBody" class="chat-body hidden">
+        <div id="messages" class="messages"></div>
+        <div id="typingRow" class="typing-row hidden"></div>
+      </main>
+
+      <div id="votePanel" class="vote-panel hidden"></div>
+
+      <footer id="composer" class="composer hidden">
+        <button id="probeBtn" class="tool-btn" title="质询：点名一个群友回答问题">质询 <span id="probeCount"></span></button>
+        <input id="msgInput" type="text" placeholder="发消息，像人一样聊天…" maxlength="300" autocomplete="off" />
+        <button id="sendBtn" class="send-btn">发送</button>
+        <button id="voteBtn" class="vote-start-btn" disabled>发起投票</button>
+      </footer>
+    </div>
+
+    <!-- 开局设置 -->
+    <div id="lobby" class="overlay">
+      <div class="lobby-card">
+        <h1>谁是AI？</h1>
+        <p class="sub">6 人群聊，5 个 AI 伪装成人类。<br>每轮投票放逐，找出所有 AI 之前，别让自己被当成 AI。</p>
+        <input id="nicknameInput" type="text" placeholder="你的群昵称" maxlength="12" value="" />
+        <div class="diff-row">
+          <span class="diff-label">AI 伪装水平</span>
+          <div id="diffOptions" class="diff-options"></div>
+        </div>
+        <button id="startBtn" class="primary-btn">进入群聊</button>
+        <p id="lobbyHint" class="hint"></p>
+      </div>
+    </div>
+
+    <!-- 质询弹窗 -->
+    <div id="probeModal" class="overlay hidden">
+      <div class="modal-card">
+        <h3>⚡ 突击质询</h3>
+        <p class="sub">点名一位群友立刻回答你的问题。他们只能靠"记忆"作答——答非所问、前后矛盾就是马脚。</p>
+        <div id="probeTargets" class="probe-targets"></div>
+        <input id="probeQuestion" type="text" placeholder="例：你刚才说的那件事，具体是哪一年？" maxlength="150" />
+        <div class="modal-actions">
+          <button id="probeCancel" class="ghost-btn">取消</button>
+          <button id="probeGo" class="primary-btn">质询</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 结算 -->
+    <div id="endOverlay" class="overlay hidden">
+      <div class="lobby-card">
+        <h1 id="endTitle"></h1>
+        <p id="endDesc" class="sub"></p>
+        <div id="endIdentities" class="identities"></div>
+        <button id="againBtn" class="primary-btn">再来一局</button>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
