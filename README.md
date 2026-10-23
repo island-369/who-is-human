@@ -49,10 +49,12 @@ who-is-human/
 # mock 模式（无需任何 API key，AI 发言为内置脚本，用于体验流程）
 node server/index.js          # 打开 http://localhost:3690
 
-# 接入真实 LLM（任意 OpenAI 兼容接口：DeepSeek / GLM / Kimi / OpenAI …）
-LLM_BASE_URL=https://api.deepseek.com/v1 \
+# 接入真实 LLM（任意 OpenAI 兼容接口：OpenRouter / DeepSeek / GLM / Kimi / OpenAI …）
+# 方式一：cp .env.example .env 后填入配置（.env 不入库）
+# 方式二：环境变量
+LLM_BASE_URL=https://openrouter.ai/api/v1 \
 LLM_API_KEY=sk-xxx \
-LLM_MODEL=deepseek-chat \
+LLM_MODEL=deepseek/deepseek-v4.1-flash \
 node server/index.js
 
 # 快速跑通整局流程的自动化验证（延迟×0.2 加速）
@@ -64,10 +66,12 @@ node scripts/e2e.mjs
 
 | 变量 | 作用 | 默认 |
 | --- | --- | --- |
-| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | OpenAI 兼容接口三件套，缺一则进 mock | 空 |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | OpenAI 兼容接口三件套，可写入 `.env`（见 `.env.example`），缺一则进 mock | 空 |
 | `MOCK=1` | 强制 mock 模式 | 自动 |
 | `TIMESCALE` | 全局延迟缩放（测试提速） | 1 |
 | `PORT` | 端口 | 3690 |
+
+> 接 OpenRouter 时自动对推理模型关闭思考（`reasoning.enabled=false`），保证群聊回复快、token 省。
 
 ## 游戏规则（当前实现）
 

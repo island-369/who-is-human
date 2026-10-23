@@ -1,5 +1,17 @@
 // LLM 客户端：OpenAI 兼容 /chat/completions；未配置 key 时自动进入 mock 模式
-const { PERSONAS } = require('./personas');
+// 配置来源：环境变量或项目根目录 .env（零依赖解析，不覆盖已有环境变量）
+const fs = require('node:fs');
+const path = require('node:path');
+
+try {
+  const envPath = path.join(__dirname, '..', '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    }
+  }
+} catch { /* .env 解析失败则忽略，继续用环境变量 */ }
 
 const BASE_URL = process.env.LLM_BASE_URL || '';
 const API_KEY = process.env.LLM_API_KEY || '';
@@ -8,15 +20,17 @@ const FORCE_MOCK = process.env.MOCK === '1';
 
 const isMock = () => FORCE_MOCK || !(BASE_URL && API_KEY && MODEL);
 
-async function chat(messages, { temperature = 0.95, max_tokens = 300 } = {}) {
+async function chat(messages, { temperature = 0.95, max_tokens = 1200 } = {}) {
+  const body = { model: MODEL, messages, temperature, max_tokens };
+  if (/openrouter/i.test(BASE_URL)) body.reasoning = { enabled: false }; // 推理模型关思考：回复快、token 省
   const res = await fetch(`${BASE_URL.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
-    body: JSON.stringify({ model: MODEL, messages, temperature, max_tokens }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`LLM ${res.status}: ${body.slice(0, 300)}`);
+    const bodyText = await res.text().catch(() => '');
+    throw new Error(`LLM ${res.status}: ${bodyText.slice(0, 300)}`);
   }
   const data = await res.json();
   const text = data.choices?.[0]?.message?.content?.trim();
@@ -24,7 +38,7 @@ async function chat(messages, { temperature = 0.95, max_tokens = 300 } = {}) {
   return text;
 }
 
-async function chatJSON(messages, { temperature = 0.7, max_tokens = 300 } = {}) {
+async function chatJSON(messages, { temperature = 0.7, max_tokens = 2000 } = {}) {
   const raw = await chat(messages, { temperature, max_tokens });
   const m = raw.match(/\{[\s\S]*\}/); // 容错：剥掉 markdown 代码块等杂质
   if (!m) throw new Error(`无法解析 JSON: ${raw.slice(0, 200)}`);
