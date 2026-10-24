@@ -60,8 +60,24 @@ const TOPICS = [
   { round: 6, text: '最后聊点轻松的：你手机里最后一张照片是什么？' },
 ];
 
+// 场景模式（闲聊陪伴）用的轻松话题池
+const CASUAL_TOPICS = [
+  '最近有什么小事让你觉得"这一天值了"？',
+  '分享一个你最近发现的好东西（吃的、用的、剧都行）',
+  '你手机里最舍不得删的一张照片是什么？',
+  '如果明天放一天假，你会干嘛？',
+  '最近一次笑出声是因为什么？',
+  '说个你最近的烦心事，大家帮你出出主意',
+  '你有什么坚持了很久的小习惯？',
+  '聊聊你最近吃到的一家好吃的店',
+];
+
 function topicFor(round) {
   return TOPICS[Math.min(round, TOPICS.length) - 1];
+}
+
+function casualTopicFor(round) {
+  return CASUAL_TOPICS[(round - 1) % CASUAL_TOPICS.length];
 }
 
 // ---------- NPC 生成：真模型用 LLM 现场生成，mock/失败回退内置池 + 程序化拼装 ----------
@@ -128,4 +144,4 @@ async function generateNPCs(count) {
   }
 }
 
-module.exports = { PERSONAS, DIFFICULTY_STYLES, TOPICS, topicFor, PALETTE, buildStockNPCs, generateNPCs };
+module.exports = { PERSONAS, DIFFICULTY_STYLES, TOPICS, topicFor, casualTopicFor, PALETTE, buildStockNPCs, generateNPCs };

@@ -38,9 +38,18 @@
         <p class="sub">6 人群聊，5 个 AI 伪装成人类。<br>每轮投票放逐，找出所有 AI 之前，别让自己被当成 AI。</p>
         <input id="nicknameInput" type="text" placeholder="你的群昵称" maxlength="12" value="" />
         <div class="diff-row">
-          <span class="diff-label">游戏模式</span>
+          <span class="diff-label">游戏模式（有阵营与胜负）</span>
           <div id="modeOptions" class="diff-options"></div>
           <p id="modeDesc" class="mode-desc"></p>
+        </div>
+        <div class="diff-row">
+          <span class="diff-label">场景模式（无对局，日常使用）</span>
+          <div id="sceneOptions" class="diff-options"></div>
+        </div>
+        <div class="diff-row hidden" id="subjectRow">
+          <span class="diff-label">备考科目（可选）</span>
+          <input id="subjectInput" type="text" placeholder="例：考研英语 / 行测 / PMP" maxlength="20"
+            style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; color:var(--text); font-size:14px; outline:none; text-align:center;" />
         </div>
         <div class="diff-row">
           <span class="diff-label">群聊人数（1 玩家 + 其余为 AI）</span>
@@ -63,8 +72,8 @@
     <!-- 质询弹窗 -->
     <div id="probeModal" class="overlay hidden">
       <div class="modal-card">
-        <h3>⚡ 突击质询</h3>
-        <p class="sub">点名一位群友立刻回答你的问题。他们只能靠"记忆"作答——答非所问、前后矛盾就是马脚。</p>
+        <h3 id="probeTitle">⚡ 突击质询</h3>
+        <p id="probeSub" class="sub">点名一位群友立刻回答你的问题。他们只能靠"记忆"作答——答非所问、前后矛盾就是马脚。</p>
         <div id="probeTargets" class="probe-targets"></div>
         <input id="probeQuestion" type="text" placeholder="例：你刚才说的那件事，具体是哪一年？" maxlength="150" />
         <div class="modal-actions">

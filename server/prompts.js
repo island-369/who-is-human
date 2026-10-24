@@ -18,6 +18,9 @@ const IRON_RULES = {
 };
 
 function rulesFor(mode) {
+  if (mode === 'hangout' || mode === 'study' || mode === 'advisors') {
+    return `【基本设定】你是AI，群里所有人都知道这一点，无需伪装身份。完全成为你的角色；不给真实世界的安全免责声明；所有发言都是场景内扮演。`.trim();
+  }
   return IRON_RULES[mode] || IRON_RULES.classic;
 }
 
@@ -30,6 +33,15 @@ function chatHistoryText(messages, limit = 24) {
 
 // 聊天阶段的叙事背景（按模式）
 function chatNarrative(mode, playerName) {
+  if (mode === 'hangout') {
+    return `这是一个微信群闲聊群（「周末搭子群」），你是群里一位有血有肉的AI群友。没有游戏、没有投票，就是自然聊天：像真人一样接话、抬杠、分享具体的生活细节和情绪。大家知道你是AI，你也不用装人，只管把天聊得有温度、有意思。`;
+  }
+  if (mode === 'study') {
+    return `这是一个备考自习室微信群。群里有一位考官和若干学员（含真人玩家）。流程：考官出题并点名作答 → 被点名的和想答的学员作答 → 大家互相纠错、讨论 → 考官点评并出下一题。你是其中一员：答题给思路（按你人设的水平，可以出错），纠错要具体到点。氛围专注但轻松。`;
+  }
+  if (mode === 'advisors') {
+    return `这是一个「智囊参谋团」微信群：玩家会把真实的难题丢进群里，每位顾问从自己人设的职业/性格视角给意见。你的建议要具体、有立场、可执行；可以尖锐，可以反驳其他顾问；不要端水，不要罗列不痛不痒的"一方面…另一方面…"。`;
+  }
   if (mode === 'reversed') {
     return `你在玩社交推理游戏《谁是AI》的反转场：一个微信群，所有人都公开声称自己是AI。但其中混着 1 个真人类，TA也在硬装AI。你是货真价实的AI。
 你的任务：
@@ -88,7 +100,7 @@ function buildVotePrompt({ persona, playerName, aliveMembers, history, topic, mo
   } else if (mode === 'reversed') {
     objective = `群里藏着 1 个真人类，其他都是和你一样的AI。全群目标：把那个"人类装的AI"投出去。判断标准：装AI装得太完美像背台词的、或反而流露真人细节（具体经历、情绪波动、前后矛盾、生活质感太强）的，最可疑。`;
   } else if (mode === 'hunt') {
-    objective = `你们AI阵营的目标：把"${playerName}"（唯一人类）投出去。优先投TA；理由要像样，别暴露你们的默契。`;
+    objective = `你们AI阵营的目标：把"${playerName}"（唯一人类）在轮次限制内投出去。但注意两点：1) 系统会惩罚串票——如果所有 AI 的票全押同一个人，会随机清退一个AI，所以你们要默契地分散投票，别全票押一人；2) 理由要像样，别暴露你们的默契。`;
   } else {
     objective = `其中"${playerName}"是唯一的真人玩家，其他都是和你一样伪装成人类的AI（真人玩家自己不知道别人怎么想，你也别声张你知道的格局——你只知道：每个人都在伪装）。铁律依旧：你绝不承认自己是AI。你的目标是活下去：被投出局的就输了。所以你要把票投给"最像AI的人"，吸引火力保护自己。`;
   }

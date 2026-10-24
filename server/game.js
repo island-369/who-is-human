@@ -2,7 +2,7 @@
 // 阶段流转：lobby → chat → vote → reveal → chat … → end
 const fs = require('node:fs');
 const path = require('node:path');
-const { DIFFICULTY_STYLES, topicFor, PALETTE, buildStockNPCs } = require('./personas');
+const { DIFFICULTY_STYLES, topicFor, casualTopicFor, PALETTE, buildStockNPCs } = require('./personas');
 const { MODES } = require('./modes');
 const { buildChatPrompt, buildVotePrompt, buildProbePrompt } = require('./prompts');
 const { isMock, chat, chatJSON, mockChat, mockVote, mockProbe, MODEL, getUsage } = require('./llm');
@@ -52,13 +52,15 @@ class Game {
     this.reset('无名氏', 3);
   }
 
-  reset(nicknameArg = '无名氏', difficulty = 3, thinking = true, aiCount = 5, npcs = null, mode = 'classic') {
+  reset(nicknameArg = '无名氏', difficulty = 3, thinking = true, aiCount = 5, npcs = null, mode = 'classic', subject = '') {
     this._clearTimers();
     this.phase = 'lobby';
     this.round = 1;
     this.difficulty = difficulty;
     this.thinking = !!thinking; // AI 深度思考：开=发言更慢更像人，投票理由更扎实
     this.mode = MODES[mode] ? mode : 'classic';
+    this.modeKind = MODES[this.mode]?.kind || 'game';
+    this.subject = String(subject || '').trim().slice(0, 20); // 备考复习的科目
     this.humanNpcId = null; // 反转场：藏匿的真人类 NPC 的成员 id
     this.winner = null;
     this.evicted = null;
@@ -66,7 +68,9 @@ class Game {
     this.revealedCount = 0;
     this.voteOrder = [];
     this.waitingPlayer = false; // 唱票停在等玩家投票
-    this.abilities = { probe: 2 };
+    this.abilities = { probe: this.modeKind === 'scene' ? 5 : 2 }; // 场景模式=自由提问，游戏模式=2次质询
+    this.goldenTickets = this.mode === 'hunt' ? 2 : 0; // 猎杀场免死金牌
+    this.examinerId = null; // 备考复习的 AI 考官
     this.aiMsgThisRound = 0;
     this.accusationDone = false;
     this.tieStreak = 0; // 连续平票轮数（防死锁）
@@ -100,6 +104,9 @@ class Game {
       npc.humanNPC = true; // 唯一真人类（伪装成AI）
       this.humanNpcId = npc.id;
     }
+    if (this.mode === 'study' && this.members.length > 1) {
+      this.examinerId = this.members[1].id; // 第一位 AI 当考官
+    }
   }
 
   _clearTimers() {
@@ -122,6 +129,14 @@ class Game {
     this.messages.push({ id: msgSeq++, from: null, name: null, kind: 'system', text, t: Date.now() });
   }
 
+  // 当前轮的"话题"文案（场景模式各有各的含义）
+  currentTopicText() {
+    if (this.mode === 'hangout') return casualTopicFor(this.round);
+    if (this.mode === 'study') return this.subject ? `科目「${this.subject}」练习时间：考官出题，群友作答` : '自习时间：考官出题，群友作答';
+    if (this.mode === 'advisors') return '（没有固定话题——把你真实的难题丢进群里，顾问们各自接招）';
+    return topicFor(this.round).text;
+  }
+
   start() {
     if (this.phase !== 'lobby') return;
     this.phase = 'chat';
@@ -129,11 +144,16 @@ class Game {
     const announce = {
       classic: `游戏开始：「周末搭子群」共 ${n} 人，其中 ${this.aiCount} 人是伪装成人类的 AI。每轮聊天后全群投票放逐一人，在你不被放逐的前提下找出所有 AI。`,
       reversed: `反转场开始：群里 ${n} 个人人都公开声称自己是 AI——但其中混着 1 个真人类！谁装 AI 装得不像？把他投出去你就赢；把 AI 全投完而人类还活着，你输。`,
-      hunt: `猎杀场开始：所有 AI 都收到了情报，知道你是唯一的人类，它们要在 ${MODES.hunt.roundsTarget} 轮内把你投出去。你不揪人，撑满 ${MODES.hunt.roundsTarget} 轮即胜。`,
+      hunt: `猎杀场开始：所有 AI 都收到了情报，知道你是唯一的人类，它们要在 ${MODES.hunt.roundsTarget} 轮内把你投出去。你有 ${this.goldenTickets} 张免死金牌（被最高票命中时自动流局）；AI 全票押一人会判串票、随机清退一人。撑满 ${MODES.hunt.roundsTarget} 轮即胜。`,
       flash: `闪电场开始：节奏拉满——每轮 AI 最多 ${MODES.flash.msgCap} 条发言，到顶自动进入投票。规则同经典：揪出所有 AI，别被投出去。`,
+      hangout: `欢迎进群！这里没有投票没有胜负，${n - 1} 位性格各异的 AI 群友陪你唠嗑，话题会自动换，你想聊什么直接说。`,
+      study: `自习室开张！${this.members.find((m) => m.id === this.examinerId)?.name || '考官'} 担任考官${this.subject ? `，科目：${this.subject}` : ''}。考官出题点名作答，AI 同学们会抢答和互相纠错——你也在群里，一起答。`,
+      advisors: `顾问团已就位：${n - 1} 位背景迥异的 AI 顾问。把你的真实难题丢进来（尽量给足背景信息），他们会各自给意见、互相抬杠。你负责追问和拍板。`,
     };
     this.sys(announce[this.mode]);
-    this.sys(`【第 1 轮话题】${topicFor(1).text}`);
+    if (this.modeKind === 'game' || this.mode === 'hangout' || this.mode === 'study') {
+      this.sys(`【第 1 轮话题】${this.currentTopicText()}`);
+    }
     this._roundStartIdx = this.messages.length;
     this._startChatLoop();
   }
@@ -144,6 +164,17 @@ class Game {
     const gen = ++this.loopGen;
     const loop = async () => {
       while (this.loopGen === gen && this.phase === 'chat') {
+        const rotate = MODES[this.mode]?.rotateEvery;
+        if (this.modeKind === 'scene' && rotate && this.aiMsgThisRound >= rotate) {
+          // 场景模式：到量自动换话题，继续聊（不退出循环）
+          this.round++;
+          this.aiMsgThisRound = 0;
+          this.accusationDone = false;
+          this.sys(`【新话题】${this.currentTopicText()}`);
+          this._roundStartIdx = this.messages.length;
+          await sleep(ms(rand(...IDLE_GAP)));
+          continue;
+        }
         const cap = MODES[this.mode]?.msgCap || AI_MSG_CAP;
         if (this.aiMsgThisRound >= cap) { // 轮内封顶：AI 停止自动互聊
           if (MODES[this.mode]?.autoVote) { await this.startVote(); break; } // 闪电场：到顶自动开票
@@ -182,6 +213,7 @@ class Game {
   // question 存在时走质询提示词（不含自己的历史发言 → 前后矛盾风险）
   async _aiSpeak(member, instruction, question) {
     const gen = this.gameGen; // 在途调用标记：期间 reset 的话结果作废
+    this._currentMemberId = member.id; // 供场景指令判断（考官等）
     member.typing = true;
     let text = null;
     try {
@@ -194,7 +226,7 @@ class Game {
         text = isMock()
           ? await mockChat({ persona: member.persona })
           : await chat([{ role: 'user', content: buildChatPrompt({
-              persona: member.persona, playerName: this.player.name, topic: topicFor(this.round).text,
+              persona: member.persona, playerName: this.player.name, topic: this.currentTopicText(),
               history: this.messages.filter((m) => m.kind === 'chat'), instruction: instruction || this._randomInstruction(),
               difficulty: this.difficulty, mode: this.mode, isHumanNPC: !!member.humanNPC,
             }) }], { thinking: this.thinking });
@@ -219,6 +251,8 @@ class Game {
   }
 
   _randomInstruction() {
+    // 场景模式有自己的指令体系
+    if (this.modeKind === 'scene') return this._sceneInstruction();
     if (this.aiMsgThisRound === 0) {
       if (this.mode === 'reversed') return '聊聊本轮话题，并在发言里顺带宣告你是AI（用你的角色风格说，比如"本人AI，只对数据类话题有反应"这种搞笑宣言也行）。';
       return '聊聊本轮话题，给出你自己的具体经历或观点（一两句即可）。';
@@ -230,6 +264,36 @@ class Game {
     }
     if (r < 0.5) return '接住最近某人的话头，回应或抬杠他（可在消息里带他的网名）。';
     if (r < 0.8) return '围绕本轮话题补充你自己的具体经历或看法，要具体、带细节。';
+    return '自然地跑题聊点符合你人设的日常，不用管话题。';
+  }
+
+  // 场景模式（闲聊/备考/参谋）的发言指令
+  _sceneInstruction() {
+    const recent = this.messages.filter((m) => m.kind === 'chat');
+    const lastPlayer = [...recent].reverse().find((m) => m.from === 'p0');
+    const isExaminer = this.examinerId && this.examinerId === this._currentMemberId;
+
+    if (this.mode === 'study') {
+      if (isExaminer) {
+        if (!recent.some((m) => m.kind === 'chat')) {
+          return `你是本群考官${this.subject ? `（科目：${this.subject}）` : ''}。出一道有质量的练习题（可以带选项），并点名一位群友作答。`;
+        }
+        return `你是考官。点评群友们的上一份答案（谁对谁错、错在哪），然后出一道新题点名下一位作答。`;
+      }
+      if (!recent.some((m) => m.kind === 'chat')) return '你是学员，简短打个招呼表示准备好了。';
+      return '考官刚出了题：给出你的答案和简单解题思路（按你人设的水平来，可以答错，也会有人纠错）。';
+    }
+
+    if (this.mode === 'advisors') {
+      if (!lastPlayer) return '开场：用一两句话亮出你的身份和擅长领域，表示随时可以接问题。';
+      return `玩家抛出了难题：「${(lastPlayer.text || '').slice(0, 80)}」。从你的人设视角给出具体、可执行的建议或反对意见（一两句），可以反驳其他顾问刚才的说法。`;
+    }
+
+    // hangout
+    if (!recent.some((m) => m.kind === 'chat')) return '聊聊本轮话题，给出你自己的具体经历（一两句即可）。';
+    const r = Math.random();
+    if (r < 0.5) return '接住最近某人的话头，回应或追问（可带对方网名）。';
+    if (r < 0.8) return '围绕本轮话题补充你的具体经历或看法，要具体、带细节。';
     return '自然地跑题聊点符合你人设的日常，不用管话题。';
   }
 
@@ -267,7 +331,7 @@ class Game {
   // ---------- 投票阶段 ----------
 
   canStartVote() {
-    return this.phase === 'chat' && this.aiMsgThisRound >= MIN_AI_MSG_BEFORE_VOTE;
+    return this.modeKind === 'game' && this.phase === 'chat' && this.aiMsgThisRound >= MIN_AI_MSG_BEFORE_VOTE;
   }
 
   async startVote() {
@@ -308,6 +372,16 @@ class Game {
     }));
     for (const r of results) this.votes[r.voter] = { target: r.target, reason: r.reason };
     if (gen !== this.gameGen) return { ok: false, error: '对局已重置' }; // 票已作废
+    // 猎杀场串票惩罚：AI 全票押一人 → 判串票，随机清退一个 AI（逼它们分散投票，给玩家活路）
+    if (this.mode === 'hunt' && results.length >= 3) {
+      const targets = new Set(results.map((r) => r.target));
+      if (targets.size === 1) {
+        const scapegoat = pick(this.aliveAIs());
+        scapegoat.alive = false;
+        scapegoat.revealed = 'ai';
+        this.sys(`⚠ 系统检测到串票：所有 AI 的票高度一致，行动暴露。随机清退一名 AI：${scapegoat.name}（它确实是 AI）。`);
+      }
+    }
     this.sys('票已收齐，开始唱票……');
     this._stagedReveal();
     return { ok: true };
@@ -349,6 +423,14 @@ class Game {
     this.evicted = victim.id;
     this.tieStreak = 0;
     if (victim.isPlayer) {
+      // 猎杀场免死金牌：被最高票命中时消耗一张，本轮流局
+      if (this.mode === 'hunt' && this.goldenTickets > 0) {
+        this.goldenTickets--;
+        victim.alive = true;
+        this.evicted = null;
+        this.sys(`唱票结果：${table}。你被最高票命中——亮出免死金牌！剩余 ${this.goldenTickets} 张，本轮无人出局。`);
+        return;
+      }
       victim.revealed = 'human';
       const text = this.mode === 'reversed'
         ? `唱票结果：${table}。${how}${victim.name} 被放逐——他们以为你才是那个真人…可你真的是人类啊。`
@@ -516,7 +598,9 @@ class Game {
       phase: this.phase, round: this.round, topic: topicFor(this.round).text,
       difficulty: this.difficulty, winner: this.winner,
       mode: this.mode, modeLabel: MODES[this.mode]?.label || '经典',
+      modeKind: this.modeKind,
       roundsTarget: this.mode === 'hunt' ? MODES.hunt.roundsTarget : null,
+      goldenTickets: this.goldenTickets,
       abilities: this.abilities, canVote: this.canStartVote(),
       mock: isMock(), usage,
       members: this.members.map((m) => ({

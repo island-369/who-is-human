@@ -22,16 +22,22 @@ const phaseLabel = { chat: '闲聊中', vote: '投票', reveal: '本轮结算', 
 
 // 模式定义（与 server/modes.js 保持一致）
 const MODES = {
-  classic: { label: '经典', tagline: 'AI 伪装人类，揪出所有 AI' },
-  reversed: { label: '反转', tagline: '全员自称 AI，揪出唯一真人' },
-  hunt: { label: '猎杀', tagline: 'AI 联合围猎你，活过 4 轮' },
-  flash: { label: '闪电', tagline: '每轮 6 条封顶，自动开票' },
+  classic: { kind: 'game', label: '经典', tagline: 'AI 伪装人类，揪出所有 AI' },
+  reversed: { kind: 'game', label: '反转', tagline: '全员自称 AI，揪出唯一真人' },
+  hunt: { kind: 'game', label: '猎杀', tagline: 'AI 联合围猎你，活过 4 轮' },
+  flash: { kind: 'game', label: '闪电', tagline: '每轮 6 条封顶，自动开票' },
+  hangout: { kind: 'scene', label: '闲聊陪伴', tagline: '一群有血有肉的 AI 群友陪你唠' },
+  study: { kind: 'scene', label: '备考复习', tagline: 'AI 考官出题，AI 同学抢答' },
+  advisors: { kind: 'scene', label: '智囊参谋', tagline: '一群视角迥异的 AI 顾问团' },
 };
 const MODE_DESC = {
   classic: 'AI 们伪装成人类。每轮投票放逐，在你不被放逐的前提下找出所有 AI。',
   reversed: '群里每个人都公开声称自己是 AI，但混着 1 个真人类 NPC 也在硬装。谁装得不像？投出去。把 AI 全投完而人类还活着，你输。',
-  hunt: '所有 AI 都知道你是唯一人类，目标是在 4 轮内把你投出去。撑满 4 轮即胜。',
+  hunt: '所有 AI 都知道你是唯一人类，要在 4 轮内把你投出去。你有 2 张免死金牌；AI 全票押一人会判串票、随机清退一人。撑满 4 轮即胜。',
   flash: '经典规则 + 极速节奏：每轮 AI 最多 6 条发言，到顶自动进入投票。',
+  hangout: '没有投票和胜负。一群性格各异的 AI 群友陪你闲聊，话题自动轮换，随时进随时聊。',
+  study: '一位 AI 考官轮流出题点名作答，其他 AI 同学一起答、互相纠错。可在下方输入备考科目。',
+  advisors: '抛出你真实的难题（跳槽、装修、创业点子…），每个 AI 从自己的人设视角给意见、互相抬杠。',
 };
 function endText(mode, winner) {
   if (mode === 'reversed') {
@@ -102,8 +108,13 @@ function render(s) {
 
   const aliveAIs = s.members.filter((m) => !m.isPlayer && m.alive).length;
   const aliveAll = s.members.filter((m) => m.alive).length;
-  $('aliveInfo').textContent = `存活 ${aliveAll} · 待揪出 AI ${aliveAIs}`;
-  $('roundChip').textContent = `第 ${s.round} 轮 · ${phaseLabel[s.phase] || s.phase}`;
+  const isScene = s.modeKind === 'scene';
+  $('aliveInfo').textContent = isScene
+    ? `${s.modeLabel} · AI 群友 ${aliveAIs} 位`
+    : `存活 ${aliveAll} · 待揪出 AI ${aliveAIs}`;
+  $('roundChip').textContent = isScene
+    ? (s.phase === 'chat' ? `话题 ${s.round}` : phaseLabel[s.phase] || s.phase)
+    : `第 ${s.round} 轮 · ${phaseLabel[s.phase] || s.phase}`;
 
   renderMembers(s);
   renderMessages(s);
@@ -207,7 +218,9 @@ function renderComposer(s) {
   const c = $('composer');
   if (s.phase !== 'chat') { c.classList.add('hidden'); return; }
   c.classList.remove('hidden');
-  $('probeCount').textContent = `×${s.abilities.probe}`;
+  const isScene = s.modeKind === 'scene';
+  $('probeBtn').innerHTML = `${isScene ? '提问' : '质询'} <span id="probeCount">×${s.abilities.probe}</span>`;
+  $('voteBtn').classList.toggle('hidden', isScene); // 场景模式没有投票
   $('probeBtn').disabled = s.abilities.probe <= 0;
   $('voteBtn').disabled = !s.canVote;
   $('voteBtn').classList.toggle('ready', s.canVote);
@@ -235,6 +248,11 @@ async function doVote(target) {
 
 function openProbeModal() {
   if (!state || state.phase !== 'chat' || state.abilities.probe <= 0) return;
+  const isScene = state.modeKind === 'scene';
+  $('probeTitle').textContent = isScene ? '💬 向群友提问' : '⚡ 突击质询';
+  $('probeSub').textContent = isScene
+    ? '点名一位群友回答你的问题（闲聊/刷题/求助都能用）。'
+    : '点名一位群友立刻回答你的问题。他们只能靠"记忆"作答——答非所问、前后矛盾就是马脚。';
   probeTarget = null;
   $('probeQuestion').value = '';
   $('probeTargets').innerHTML = state.members
@@ -303,15 +321,20 @@ async function renderGamesList() {
 // ---------- 大厅 ----------
 
 function initLobby() {
-  $('modeOptions').innerHTML = Object.entries(MODES).map(([k, m]) =>
+  const gameModes = Object.entries(MODES).filter(([, m]) => m.kind === 'game');
+  const sceneModes = Object.entries(MODES).filter(([, m]) => m.kind === 'scene');
+  $('modeOptions').innerHTML = gameModes.map(([k, m]) =>
+    `<div class="diff-opt ${k === chosenMode ? 'sel' : ''}" data-mode="${k}" title="${m.tagline}">${m.label}</div>`).join('');
+  $('sceneOptions').innerHTML = sceneModes.map(([k, m]) =>
     `<div class="diff-opt ${k === chosenMode ? 'sel' : ''}" data-mode="${k}" title="${m.tagline}">${m.label}</div>`).join('');
   $('modeDesc').textContent = MODE_DESC[chosenMode];
-  $('modeOptions').querySelectorAll('[data-mode]').forEach((el) =>
+  document.querySelectorAll('#modeOptions [data-mode], #sceneOptions [data-mode]').forEach((el) =>
     el.addEventListener('click', () => {
       chosenMode = el.dataset.mode;
-      $('modeOptions').querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
+      document.querySelectorAll('#modeOptions .sel, #sceneOptions .sel').forEach((x) => x.classList.remove('sel'));
       el.classList.add('sel');
       $('modeDesc').textContent = MODE_DESC[chosenMode];
+      $('subjectRow').classList.toggle('hidden', chosenMode !== 'study');
     }));
   const counts = [5, 6, 7, 8, 9];
   $('countOptions').innerHTML = counts.map((n) =>
@@ -341,7 +364,11 @@ function initLobby() {
       el.classList.add('sel');
     }));
   $('startBtn').addEventListener('click', async () => {
-    startOpts = { nickname: $('nicknameInput').value.trim() || '无名氏', difficulty: chosenDiff, thinking: chosenThink, aiCount: chosenTotal - 1, mode: chosenMode };
+    startOpts = {
+      nickname: $('nicknameInput').value.trim() || '无名氏', difficulty: chosenDiff,
+      thinking: chosenThink, aiCount: chosenTotal - 1, mode: chosenMode,
+      subject: ($('subjectInput')?.value || '').trim(),
+    };
     try {
       $('startBtn').disabled = true;
       $('startBtn').textContent = '群友入场中…';
