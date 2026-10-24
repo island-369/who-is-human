@@ -61,6 +61,8 @@ function buildChatPrompt({ persona, playerName, topic, history, instruction, dif
   const rules = isHumanNPC ? humanNPCRules() : rulesFor(mode);
   const narrative = isHumanNPC ? humanNPCNarrative() : chatNarrative(mode, playerName);
   const extra = mode === 'hunt' ? `\n【私下情报】你们AI阵营已同步：优先怀疑并投票"${playerName}"。` : '';
+  const scene = mode === 'hangout' || mode === 'study' || mode === 'advisors';
+  const styleBlock = scene ? '' : `\n【伪装风格】${DIFFICULTY_STYLES[difficulty].style}`;
   return `${narrative}${extra}
 
 你的角色设定（你要完全成为他/她）：
@@ -68,9 +70,7 @@ ${persona.sheet}
 
 本轮话题：${topic}
 
-${rules}
-
-【伪装风格】${DIFFICULTY_STYLES[difficulty].style}
+${rules}${styleBlock}
 
 【发言习惯】像微信闲聊：一次只发1条短消息，1~2句话以内；不要条条列点，不要长篇大论；不用每次都捧场附和，可以有态度、可以反驳；称呼别人用网名。
 

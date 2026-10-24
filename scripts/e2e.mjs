@@ -61,7 +61,7 @@ const waitPhase = async (phases, timeout = 60000) => {
   await sleep(2500);
   s = await state();
   check(s.abilities.probe === 1, '质询次数 2→1');
-  check(s.messages.some((m) => m.text.includes('发动质询')), '质询公告已广播');
+  check(s.messages.some((m) => m.text.includes('质询')), '质询公告已广播');
 
   r = await api('/api/action', { type: 'vote', target: aTarget.id });
   check(r.status === 400, '聊天阶段投票被拒绝');

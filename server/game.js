@@ -18,6 +18,7 @@ const REPLY_DELAY = [1500, 3800]; // 玩家发言后 AI 接话延迟
 const VOTE_REVEAL_STEP = 1000; // 唱票逐条亮票间隔
 const CANCEL_CHANCE = 0.08; // "正在输入"后放弃的概率（人类感）
 const MIN_AI_MSG_BEFORE_VOTE = 4;
+const SCENE_MSG_CAP = Number(process.env.SCENE_MSG_CAP || 60); // 场景模式自动发言总预算：防挂机烧钱
 
 const sleep = (ms_) => new Promise((r) => setTimeout(r, ms_));
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -80,6 +81,7 @@ class Game {
     this.roundLogs = [];
     this._roundStartIdx = 0;
     this.capHintShown = false;
+    this.sceneAutoCount = 0; // 场景模式自动发言总计数
     this.usageAtStart = getUsage(); // 本局消耗基线
 
     // 对局留档：固定文件名（开局时间+昵称），每轮结算时覆盖写入
@@ -164,25 +166,38 @@ class Game {
     const gen = ++this.loopGen;
     const loop = async () => {
       while (this.loopGen === gen && this.phase === 'chat') {
-        const rotate = MODES[this.mode]?.rotateEvery;
-        if (this.modeKind === 'scene' && rotate && this.aiMsgThisRound >= rotate) {
-          // 场景模式：到量自动换话题，继续聊（不退出循环）
-          this.round++;
-          this.aiMsgThisRound = 0;
-          this.accusationDone = false;
-          this.sys(`【新话题】${this.currentTopicText()}`);
-          this._roundStartIdx = this.messages.length;
-          await sleep(ms(rand(...IDLE_GAP)));
-          continue;
-        }
-        const cap = MODES[this.mode]?.msgCap || AI_MSG_CAP;
-        if (this.aiMsgThisRound >= cap) { // 轮内封顶：AI 停止自动互聊
-          if (MODES[this.mode]?.autoVote) { await this.startVote(); break; } // 闪电场：到顶自动开票
-          if (!this.capHintShown) {
-            this.capHintShown = true;
-            this.sys('（群里安静下来了——本轮 AI 发言已达上限。你可以继续发言引他们接话，或直接发起投票。）');
+        if (this.modeKind === 'scene') {
+          // 场景模式：总预算到量 → 休息（玩家发言可唤醒），防止无限聊烧钱
+          if (this.sceneAutoCount >= SCENE_MSG_CAP) {
+            if (!this.capHintShown) {
+              this.capHintShown = true;
+              this.sys('（群聊先告一段落～想继续的话随便说句话唤醒大家；不用的时候记得点右上角退出，省点 token。）');
+            }
+            break;
           }
-          break;
+          const rotate = MODES[this.mode]?.rotateEvery;
+          if (rotate && this.aiMsgThisRound >= rotate) {
+            // 场景模式：到量自动换话题，继续聊（不退出循环）
+            this.round++;
+            this.aiMsgThisRound = 0;
+            this.accusationDone = false;
+            this._pushRoundLog(); // 场景没有投票结算，轮换时落盘一次
+            this.saveLog();
+            this.sys(`【新话题】${this.currentTopicText()}`);
+            this._roundStartIdx = this.messages.length;
+            await sleep(ms(rand(...IDLE_GAP)));
+            continue;
+          }
+        } else {
+          const cap = MODES[this.mode]?.msgCap || AI_MSG_CAP;
+          if (this.aiMsgThisRound >= cap) { // 轮内封顶：AI 停止自动互聊
+            if (MODES[this.mode]?.autoVote) { await this.startVote(); break; } // 闪电场：到顶自动开票
+            if (!this.capHintShown) {
+              this.capHintShown = true;
+              this.sys('（群里安静下来了——本轮 AI 发言已达上限。你可以继续发言引他们接话，或直接发起投票。）');
+            }
+            break;
+          }
         }
         const speaker = this._pickNextSpeaker();
         if (!speaker) break;
@@ -247,7 +262,10 @@ class Game {
       return;
     }
     this.messages.push({ id: msgSeq++, from: member.id, name: member.name, kind: 'chat', text, t: Date.now() });
-    if (!question) this.aiMsgThisRound++;
+    if (!question) {
+      this.aiMsgThisRound++;
+      if (this.modeKind === 'scene') this.sceneAutoCount++;
+    }
   }
 
   _randomInstruction() {
@@ -302,6 +320,12 @@ class Game {
     text = (text || '').trim().slice(0, 300);
     if (!text) return { ok: false, error: '消息为空' };
     this.messages.push({ id: msgSeq++, from: 'p0', name: this.player.name, kind: 'chat', text, t: Date.now() });
+    // 场景模式：预算耗尽后玩家发言可唤醒群聊（回补一段预算并重启循环）
+    if (this.modeKind === 'scene' && this.sceneAutoCount >= SCENE_MSG_CAP) {
+      this.sceneAutoCount = Math.max(0, SCENE_MSG_CAP - 20);
+      this.capHintShown = false;
+      this._startChatLoop();
+    }
     // 概率触发 1~2 个 AI 接话
     const responders = this.aliveAIs().sort(() => Math.random() - 0.5).slice(0, Math.random() < 0.2 ? 2 : 1);
     for (const r of responders) {
@@ -323,7 +347,8 @@ class Game {
     question = (question || '').trim().slice(0, 150);
     if (!target || !question) return { ok: false, error: '参数不合法' };
     this.abilities.probe--;
-    this.sys(`⚡ ${this.player.name} 发动质询 → ${target.name}：「${question}」`);
+    const label = this.modeKind === 'scene' ? '提问' : '质询';
+    this.sys(`⚡ ${this.player.name} 向 ${target.name} ${label}：「${question}」`);
     this._later(() => this._aiSpeak(target, null, question), ms(rand(600, 1400)));
     return { ok: true };
   }
@@ -379,6 +404,7 @@ class Game {
         const scapegoat = pick(this.aliveAIs());
         scapegoat.alive = false;
         scapegoat.revealed = 'ai';
+        delete this.votes[scapegoat.id]; // 被清退者的票不计入唱票
         this.sys(`⚠ 系统检测到串票：所有 AI 的票高度一致，行动暴露。随机清退一名 AI：${scapegoat.name}（它确实是 AI）。`);
       }
     }
@@ -474,13 +500,14 @@ class Game {
     }
     this._pushRoundLog();
     if (this.phase === 'end') { this.saveLog(); return; }
-    if (this.mode === 'reversed' && this.aliveAIs().length === 0) {
-      // 反转场：AI 全投完 → 唯一人类笑到最后 → 玩家输
+    const realAIs = this.aliveAIs().filter((m) => !m.humanNPC); // 反转场：隐藏人类不算真AI
+    if (this.mode === 'reversed' && realAIs.length === 0) {
+      // 反转场：真AI全投完 → 唯一人类笑到最后 → 玩家输
       this.sys('所有 AI 都被投完了，唯一的真人类笑到了最后——你输了。');
       this._end('ai');
       return;
     }
-    if (this.mode !== 'reversed' && this.aliveAIs().length === 0) {
+    if (this.mode !== 'reversed' && realAIs.length === 0) {
       this.sys('所有 AI 都被找出来了，你赢下了这场反向图灵测试！');
       this._end('human');
       return;
