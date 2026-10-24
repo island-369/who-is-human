@@ -165,6 +165,7 @@ body {
 
 .diff-row { margin-bottom: 16px; }
 .diff-label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+.diff-label .tip { font-style: normal; color: #5d6478; margin-left: 4px; }
 .diff-options { display: flex; gap: 8px; }
 .diff-opt {
   flex: 1; padding: 9px 0; border-radius: 10px; border: 1px solid var(--line);

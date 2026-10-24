@@ -20,9 +20,10 @@ const FORCE_MOCK = process.env.MOCK === '1';
 
 const isMock = () => FORCE_MOCK || !(BASE_URL && API_KEY && MODEL);
 
-async function chat(messages, { temperature = 0.95, max_tokens = 1200 } = {}) {
+async function chat(messages, { temperature = 0.95, max_tokens = 1200, thinking = false } = {}) {
   const body = { model: MODEL, messages, temperature, max_tokens };
-  if (/openrouter/i.test(BASE_URL)) body.reasoning = { enabled: false }; // 推理模型关思考：回复快、token 省
+  if (/openrouter/i.test(BASE_URL)) body.reasoning = { enabled: !!thinking }; // 思考开关：开=更像人但慢且贵
+  if (thinking) body.max_tokens = Math.max(max_tokens, 3000); // 思考内容也占 token，额度放宽
   const res = await fetch(`${BASE_URL.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
@@ -38,8 +39,8 @@ async function chat(messages, { temperature = 0.95, max_tokens = 1200 } = {}) {
   return text;
 }
 
-async function chatJSON(messages, { temperature = 0.7, max_tokens = 2000 } = {}) {
-  const raw = await chat(messages, { temperature, max_tokens });
+async function chatJSON(messages, { temperature = 0.7, max_tokens = 2000, thinking = false } = {}) {
+  const raw = await chat(messages, { temperature, max_tokens, thinking });
   const m = raw.match(/\{[\s\S]*\}/); // 容错：剥掉 markdown 代码块等杂质
   if (!m) throw new Error(`无法解析 JSON: ${raw.slice(0, 200)}`);
   return JSON.parse(m[0]);

@@ -44,7 +44,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/start' && req.method === 'POST') {
     const body = await readBody(req);
     const difficulty = DIFFICULTY_STYLES[body.difficulty] ? Number(body.difficulty) : 3;
-    game.reset(body.nickname, difficulty);
+    game.reset(body.nickname, difficulty, body.thinking !== false); // 默认开思考
     game.start();
     return send(res, 200, { ok: true, mock: isMock() });
   }

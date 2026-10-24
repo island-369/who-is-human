@@ -31,7 +31,7 @@ function roundLogsToMarkdown(r) {
   const L = [];
   L.push('# Who is Human? 对局记录', '');
   L.push(`- 开局：${r.startedAt}${r.endedAt ? ` ｜ 终局：${r.endedAt}` : '（进行中）'}`);
-  L.push(`- 配置：难度 ${r.difficultyLabel}${r.mock ? ' ｜ MOCK 模式' : ` ｜ 模型 ${r.model}`}`);
+  L.push(`- 配置：难度 ${r.difficultyLabel}${r.thinking ? ' ｜ 深度思考开' : ''}${r.mock ? ' ｜ MOCK 模式' : ` ｜ 模型 ${r.model}`}`);
   const outcome = r.winner === 'human' ? '🏆 人类胜利' : r.winner === 'ai' ? '💀 AI 胜利（玩家被放逐）' : '进行中';
   L.push(`- 结果：${outcome}，共 ${r.roundCount} 轮`);
   L.push(`- 成员：${r.members.map((m) => `${m.name}${m.isPlayer ? '（你）' : ''}=${m.revealed === 'ai' ? 'AI' : m.revealed === 'human' ? '人类' : '?'}${m.alive ? '' : '（出局）'}`).join('，')}`);
@@ -51,11 +51,12 @@ class Game {
     this.reset('无名氏', 3);
   }
 
-  reset(nicknameArg = '无名氏', difficulty = 3) {
+  reset(nicknameArg = '无名氏', difficulty = 3, thinking = true) {
     this._clearTimers();
     this.phase = 'lobby';
     this.round = 1;
     this.difficulty = difficulty;
+    this.thinking = !!thinking; // AI 深度思考：开=发言更慢更像人，投票理由更扎实
     this.winner = null;
     this.evicted = null;
     this.votes = {}; // voterId -> {target, reason}
@@ -68,6 +69,7 @@ class Game {
     this.tieStreak = 0; // 连续平票轮数（防死锁）
     this.messages = [];
     this.loopGen = 0; // 聊天循环代数，防止双开
+    this.gameGen = (this.gameGen || 0) + 1; // 对局代号：reset 后作废所有跨局的在途调用
     this.roundLogs = [];
     this._roundStartIdx = 0;
 
@@ -148,6 +150,7 @@ class Game {
 
   // question 存在时走质询提示词（不含自己的历史发言 → 前后矛盾风险）
   async _aiSpeak(member, instruction, question) {
+    const gen = this.gameGen; // 在途调用标记：期间 reset 的话结果作废
     member.typing = true;
     let text = null;
     try {
@@ -155,7 +158,7 @@ class Game {
         const recentOthers = this.messages.filter((m) => m.kind === 'chat' && m.from !== member.id).slice(-8);
         text = isMock()
           ? await mockProbe()
-          : await chat([{ role: 'user', content: buildProbePrompt({ persona: member.persona, question, recentOthers, playerName: this.player.name }) }]);
+          : await chat([{ role: 'user', content: buildProbePrompt({ persona: member.persona, question, recentOthers, playerName: this.player.name }) }], { thinking: this.thinking });
       } else {
         text = isMock()
           ? await mockChat({ persona: member.persona })
@@ -163,7 +166,7 @@ class Game {
               persona: member.persona, playerName: this.player.name, topic: topicFor(this.round).text,
               history: this.messages.filter((m) => m.kind === 'chat'), instruction: instruction || this._randomInstruction(),
               difficulty: this.difficulty,
-            }) }]);
+            }) }], { thinking: this.thinking });
       }
       if (text) text = text.replace(/^["「『]|["」』]$/g, '').trim().slice(0, 200); // 防长篇大论
     } catch (e) {
@@ -171,6 +174,7 @@ class Game {
     }
     await sleep(this.typingMs(text || '嗯嗯'));
     member.typing = false;
+    if (gen !== this.gameGen) return; // 对局已重置，这条消息不属于本局
     if (this.phase !== 'chat' || !text) {
       if (text && this.phase !== 'chat' && Math.random() < 0.3) this.sys(`${member.name} 撤回了一条消息`);
       return; // 阶段变了就闭嘴
@@ -236,6 +240,7 @@ class Game {
     if (!this.canStartVote()) return { ok: false, error: '再让大家聊一会儿（需要几条群友发言后才能投票）' };
     this.phase = 'vote';
     this.loopGen++; // 停掉聊天循环
+    const gen = this.gameGen; // 收票期间若 reset，弃票
     for (const m of this.members) m.typing = false;
     this.sys(`第 ${this.round} 轮投票开始：投出你觉得最像 AI 的人。`);
     const ais = this.aliveAIs();
@@ -254,7 +259,7 @@ class Game {
           persona: ai.persona, playerName: this.player.name,
           aliveMembers: this.aliveMembers().map((m) => ({ id: m.id, name: m.name })),
           history: this.messages.filter((m) => m.kind === 'chat'), topic: topicFor(this.round).text,
-        }) }]);
+        }) }], { thinking: this.thinking });
         const t = this.byName(out.target);
         const target = t && t.alive && t.id !== ai.id ? t.name : pick(this.aliveMembers().filter((m) => m.id !== ai.id)).name;
         return { voter: ai.id, target, reason: String(out.reason || '').slice(0, 100) };
@@ -264,6 +269,7 @@ class Game {
       }
     }));
     for (const r of results) this.votes[r.voter] = { target: r.target, reason: r.reason };
+    if (gen !== this.gameGen) return { ok: false, error: '对局已重置' }; // 票已作废
     this.sys('票已收齐，开始唱票……');
     this._stagedReveal();
     return { ok: true };
@@ -371,6 +377,7 @@ class Game {
       endedAt: this.phase === 'end' ? new Date().toISOString() : null,
       difficulty: this.difficulty,
       difficultyLabel: DIFFICULTY_STYLES[this.difficulty]?.label || String(this.difficulty),
+      thinking: this.thinking,
       mock: isMock(),
       model: isMock() ? null : MODEL,
       winner: this.winner,

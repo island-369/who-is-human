@@ -8,6 +8,7 @@ let state = null;
 let lastMsgId = 0;
 let pollTimer = null;
 let chosenDiff = 3;
+let chosenThink = true;
 let probeTarget = null;
 let startOpts = { nickname: '无名氏', difficulty: 3 };
 
@@ -226,8 +227,17 @@ function initLobby() {
       $('diffOptions').querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
       el.classList.add('sel');
     }));
+  const thinks = [[true, '开'], [false, '关']];
+  $('thinkOptions').innerHTML = thinks.map(([v, label]) =>
+    `<div class="diff-opt ${v === chosenThink ? 'sel' : ''}" data-think="${v}">${label}</div>`).join('');
+  $('thinkOptions').querySelectorAll('[data-think]').forEach((el) =>
+    el.addEventListener('click', () => {
+      chosenThink = el.dataset.think === 'true';
+      $('thinkOptions').querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
+      el.classList.add('sel');
+    }));
   $('startBtn').addEventListener('click', async () => {
-    startOpts = { nickname: $('nicknameInput').value.trim() || '无名氏', difficulty: chosenDiff };
+    startOpts = { nickname: $('nicknameInput').value.trim() || '无名氏', difficulty: chosenDiff, thinking: chosenThink };
     try { await api('/api/start', startOpts); }
     catch (e) { toast(e.message); }
   });
