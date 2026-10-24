@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Game } = require('./game');
 const { isMock, MODEL, getUsage } = require('./llm');
-const { DIFFICULTY_STYLES } = require('./personas');
+const { DIFFICULTY_STYLES, generateNPCs } = require('./personas');
 
 const PORT = Number(process.env.PORT || 3690);
 const game = new Game();
@@ -45,7 +45,9 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/start' && req.method === 'POST') {
     const body = await readBody(req);
     const difficulty = DIFFICULTY_STYLES[body.difficulty] ? Number(body.difficulty) : 3;
-    game.reset(body.nickname, difficulty, body.thinking !== false); // 默认开思考
+    const aiCount = Math.max(3, Math.min(8, Number(body.aiCount) || 5));
+    const npcs = await generateNPCs(aiCount); // 真模型现场生成人设（1次调用），mock/失败回退内置池
+    game.reset(body.nickname, difficulty, body.thinking !== false, aiCount, npcs);
     game.start();
     return send(res, 200, { ok: true, mock: isMock() });
   }

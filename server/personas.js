@@ -1,4 +1,5 @@
-// persona 库：5 个 AI 群友 + 难度分级风格 + 每轮话题（人类暴露题）
+// persona 库：5 个内置 AI 群友 + 难度分级风格 + 每轮话题（人类暴露题）+ NPC 随机生成
+const { isMock, chat } = require('./llm');
 
 const PERSONAS = [
   {
@@ -63,4 +64,68 @@ function topicFor(round) {
   return TOPICS[Math.min(round, TOPICS.length) - 1];
 }
 
-module.exports = { PERSONAS, DIFFICULTY_STYLES, TOPICS, topicFor };
+// ---------- NPC 生成：真模型用 LLM 现场生成，mock/失败回退内置池 + 程序化拼装 ----------
+
+const PALETTE = ['#5b8def', '#f27ba9', '#8a9a5b', '#9b7bd4', '#e8a33d', '#4ec3c9', '#e07a5f', '#7f9cf5', '#c99ad6', '#76b5a9'];
+
+const PROC_TRAITS = {
+  jobs: ['跑滴滴的', '开小卖部的', '健身房教练', '工地做监理', '宠物医院护士', '卖保险的', '酒吧调酒师', '考公第三年', '快递站站长', '自由摄影师', '直播带货主播', '高中班主任'],
+  tempers: ['暴脾气但心软', '慢性子说话慢悠悠', '自来熟跟谁都聊得来', '社恐回消息忽快忽慢', '毒舌但只对熟人', '乐天派什么都能笑出来', '焦虑型爱说"完了"', '大嗓门感叹号特别多'],
+  quirks: ['养了只鹦鹉会接话', '每天五点起来钓鱼', '装修房子快疯了', '上夜班白天睡觉', '戒奶茶第N次', '开车从不听歌', '手机屏碎了半年没换', '记账精确到一块钱'],
+  styles: ['爱用省略号…', '喜欢发语音转文字，错字连篇', '句尾带"嘛"', "爱发'哈哈哈'但从不发表情包", '说话爱用反问句', '常用叠词', '爱引用老歌歌词'],
+};
+
+const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
+
+function buildStockNPCs(count) {
+  const jobs = shuffle(PROC_TRAITS.jobs), tempers = shuffle(PROC_TRAITS.tempers);
+  const quirks = shuffle(PROC_TRAITS.quirks), styles = shuffle(PROC_TRAITS.styles);
+  const out = PERSONAS.map((p) => ({ name: p.name, sheet: p.sheet }));
+  let i = 0;
+  while (out.length < count) {
+    const n = i++;
+    out.push({
+      name: ['大鹏', 'Luna', '强子', '慢慢', 'Tony', '喵姐', '老白', '小K'][n % 8] + (n >= 8 ? String(n) : ''),
+      sheet: `25~45岁，${jobs[n % jobs.length]}。性格${tempers[n % tempers.length]}。说话${styles[n % styles.length]}。${quirks[n % quirks.length]}。`,
+    });
+  }
+  return out.slice(0, count);
+}
+
+function npcPrompt(count) {
+  return `为一款"反向图灵测试"社交推理游戏生成 ${count} 个伪装成人类的AI群友人设，场景是一个普通微信群。
+要求：
+- 每人一个网名（2~6字，风格多样：中文昵称/英文ID/带数字的ID都行，互相不撞名）
+- sheet 是人物小传（80~140字）：年龄段+职业/身份、性格、说话习惯（语气词、错别字倾向、梗浓度、标点习惯）、1个独特的记忆点（如养鹦鹉、跑滴滴、考研二战、带着俩娃…）
+- 所有人之间年龄、职业、性格、说话风格必须拉开明显差异，不要全是年轻人
+只输出 JSON 数组，格式：[{"name":"网名","sheet":"小传"}]`;
+}
+
+async function generateNPCs(count) {
+  if (isMock()) return buildStockNPCs(count);
+  try {
+    const raw = await chat([{ role: 'user', content: npcPrompt(count) }], { temperature: 1.05, max_tokens: 3000, kind: 'npc' });
+    const m = raw.match(/\[[\s\S]*\]/);
+    if (!m) throw new Error('输出不是 JSON 数组');
+    const seen = new Set();
+    const out = [];
+    for (const p of JSON.parse(m[0])) {
+      if (!p || typeof p.name !== 'string' || typeof p.sheet !== 'string' || !p.name.trim() || !p.sheet.trim()) continue;
+      const name = p.name.trim().slice(0, 8);
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push({ name, sheet: p.sheet.trim() });
+      if (out.length >= count) break;
+    }
+    for (const p of buildStockNPCs(count)) {
+      if (out.length >= count) break;
+      if (!seen.has(p.name)) { seen.add(p.name); out.push(p); }
+    }
+    return out.slice(0, count);
+  } catch (e) {
+    console.error('[NPC生成失败，回退内置人设]', e.message);
+    return buildStockNPCs(count);
+  }
+}
+
+module.exports = { PERSONAS, DIFFICULTY_STYLES, TOPICS, topicFor, PALETTE, buildStockNPCs, generateNPCs };

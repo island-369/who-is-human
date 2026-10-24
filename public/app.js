@@ -1,7 +1,10 @@
 // 前端逻辑：轮询渲染 + 玩家操作
 const $ = (id) => document.getElementById(id);
 const COLORS = { p0: '#3ddc97', laok: '#5b8def', tangtang: '#f27ba9', chenshu: '#8a9a5b', mia: '#9b7bd4', azhai: '#e8a33d' };
-const colorOf = (id) => COLORS[id] || '#7a8299';
+const colorOf = (id) => {
+  const mem = state && state.members ? state.members.find((x) => x.id === id) : null;
+  return (mem && mem.color) || COLORS[id] || '#7a8299';
+};
 const initial = (name) => [...name][0] || '?';
 
 let state = null;
@@ -9,6 +12,7 @@ let lastMsgId = 0;
 let pollTimer = null;
 let chosenDiff = 3;
 let chosenThink = true;
+let chosenTotal = 6;
 let probeTarget = null;
 let startOpts = { nickname: '无名氏', difficulty: 3, thinking: true };
 let prevPhase = null;
@@ -273,6 +277,15 @@ async function renderGamesList() {
 // ---------- 大厅 ----------
 
 function initLobby() {
+  const counts = [5, 6, 7, 8, 9];
+  $('countOptions').innerHTML = counts.map((n) =>
+    `<div class="diff-opt ${n === chosenTotal ? 'sel' : ''}" data-count="${n}">${n}人</div>`).join('');
+  $('countOptions').querySelectorAll('[data-count]').forEach((el) =>
+    el.addEventListener('click', () => {
+      chosenTotal = Number(el.dataset.count);
+      $('countOptions').querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
+      el.classList.add('sel');
+    }));
   const diffs = [[1, '简单'], [3, '普通'], [5, '困难']];
   $('diffOptions').innerHTML = diffs.map(([v, label]) =>
     `<div class="diff-opt ${v === chosenDiff ? 'sel' : ''}" data-diff="${v}">${label}</div>`).join('');
@@ -292,9 +305,14 @@ function initLobby() {
       el.classList.add('sel');
     }));
   $('startBtn').addEventListener('click', async () => {
-    startOpts = { nickname: $('nicknameInput').value.trim() || '无名氏', difficulty: chosenDiff, thinking: chosenThink };
-    try { await api('/api/start', startOpts); }
-    catch (e) { toast(e.message); }
+    startOpts = { nickname: $('nicknameInput').value.trim() || '无名氏', difficulty: chosenDiff, thinking: chosenThink, aiCount: chosenTotal - 1 };
+    try {
+      $('startBtn').disabled = true;
+      $('startBtn').textContent = '群友入场中…';
+      await api('/api/start', startOpts);
+    } catch (e) { toast(e.message); }
+    $('startBtn').disabled = false;
+    $('startBtn').textContent = '进入群聊';
   });
   $('againBtn').addEventListener('click', async () => {
     $('endOverlay').classList.add('hidden');

@@ -2,13 +2,12 @@
 // 阶段流转：lobby → chat → vote → reveal → chat … → end
 const fs = require('node:fs');
 const path = require('node:path');
-const { PERSONAS, DIFFICULTY_STYLES, topicFor } = require('./personas');
+const { DIFFICULTY_STYLES, topicFor, PALETTE, buildStockNPCs } = require('./personas');
 const { buildChatPrompt, buildVotePrompt, buildProbePrompt } = require('./prompts');
 const { isMock, chat, chatJSON, mockChat, mockVote, mockProbe, MODEL, getUsage } = require('./llm');
 
 const GAMES_DIR = path.join(__dirname, '..', 'games');
 
-const NUM_AI = 5;
 const AI_MSG_CAP = Number(process.env.AI_MSG_CAP || 16); // 每轮 AI 自动发言上限：防止挂机烧钱
 const TYPING_BASE = 1200; // 打字耗时基线
 const TYPING_PER_CHAR = 55;
@@ -52,7 +51,7 @@ class Game {
     this.reset('无名氏', 3);
   }
 
-  reset(nicknameArg = '无名氏', difficulty = 3, thinking = true) {
+  reset(nicknameArg = '无名氏', difficulty = 3, thinking = true, aiCount = 5, npcs = null) {
     this._clearTimers();
     this.phase = 'lobby';
     this.round = 1;
@@ -83,11 +82,16 @@ class Game {
     const safeNick = (nicknameArg || '无名氏').replace(/[\\/:*?"<>|\s]/g, '').slice(0, 12) || '无名氏';
     this.logBase = path.join(GAMES_DIR, `${stamp}-${safeNick}`);
 
-    const shuffled = [...PERSONAS].sort(() => Math.random() - 0.5).slice(0, NUM_AI);
+    this.aiCount = Math.max(3, Math.min(8, Number(aiCount) || 5));
+    const chosen = (Array.isArray(npcs) && npcs.length >= this.aiCount ? npcs : buildStockNPCs(this.aiCount)).slice(0, this.aiCount);
     let nickname = (nicknameArg || '无名氏').slice(0, 12);
-    while (shuffled.some((p) => p.name === nickname)) nickname += '_'; // 防止与 AI 重名导致投票误伤
-    const player = { id: 'p0', name: nickname, isPlayer: true, alive: true, typing: false, revealed: null };
-    this.members = [player, ...shuffled.map((p) => ({ id: p.id, name: p.name, isPlayer: false, alive: true, typing: false, revealed: null, persona: p }))];
+    while (chosen.some((p) => p.name === nickname)) nickname += '_'; // 防止与 AI 重名导致投票误伤
+    const player = { id: 'p0', name: nickname, color: '#3ddc97', isPlayer: true, alive: true, typing: false, revealed: null };
+    this.members = [player, ...chosen.map((p, i) => ({
+      id: `npc${i}`, name: p.name, color: PALETTE[(i + 1) % PALETTE.length],
+      isPlayer: false, alive: true, typing: false, revealed: null,
+      persona: { id: `npc${i}`, name: p.name, sheet: p.sheet },
+    }))];
   }
 
   _clearTimers() {
@@ -465,7 +469,7 @@ class Game {
       abilities: this.abilities, canVote: this.canStartVote(),
       mock: isMock(), usage,
       members: this.members.map((m) => ({
-        id: m.id, name: m.name, alive: m.alive, isPlayer: !!m.isPlayer, typing: m.typing,
+        id: m.id, name: m.name, color: m.color, alive: m.alive, isPlayer: !!m.isPlayer, typing: m.typing,
         revealed: m.revealed || (revealAll ? (m.isPlayer ? 'human' : 'ai') : null),
       })),
       messages: this.messages.slice(-250),
