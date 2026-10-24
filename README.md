@@ -71,6 +71,10 @@ node scripts/e2e.mjs
 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | OpenAI 兼容接口三件套，可写入 `.env`（见 `.env.example`），缺一则进 mock | 空 |
 | `MOCK=1` | 强制 mock 模式 | 自动 |
 | `TIMESCALE` | 全局延迟缩放（测试提速） | 1 |
+| `AI_MSG_CAP` | 游戏模式每轮 AI 自动发言上限 | 16 |
+| `SCENE_MSG_CAP` | 场景模式自动发言总预算 | 60 |
+| `ROOM_IDLE_MIN` | 多房间空闲回收时间（分钟） | 30 |
+| `ROOM_ACTIVE_TIMEOUT_S` | 前端轮询断流多久后挂起聊天循环（秒，防关页烧钱） | 120 |
 | `PORT` | 端口 | 3690 |
 
 > 接 OpenRouter 时自动对推理模型关闭思考（`reasoning.enabled=false`），保证群聊回复快、token 省。

@@ -19,6 +19,7 @@ const VOTE_REVEAL_STEP = 1000; // 唱票逐条亮票间隔
 const CANCEL_CHANCE = 0.08; // "正在输入"后放弃的概率（人类感）
 const MIN_AI_MSG_BEFORE_VOTE = 4;
 const SCENE_MSG_CAP = Number(process.env.SCENE_MSG_CAP || 60); // 场景模式自动发言总预算：防挂机烧钱
+const ROOM_ACTIVE_TIMEOUT_MS = Number(process.env.ROOM_ACTIVE_TIMEOUT_S || 120) * 1000; // 前端轮询断流超时：挂起聊天循环省 token
 
 const sleep = (ms_) => new Promise((r) => setTimeout(r, ms_));
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -84,12 +85,13 @@ class Game {
     this.sceneAutoCount = 0; // 场景模式自动发言总计数
     this.usageAtStart = getUsage(); // 本局消耗基线
 
-    // 对局留档：固定文件名（开局时间+昵称），每轮结算时覆盖写入
+    // 对局留档：文件名（开局时间+昵称+随机后缀，防多房间同秒同名冲突），每轮结算时覆盖写入
     const d = new Date();
     this.startedAt = d;
+    this.gen = d.getTime(); // 前端凭 gen 变化清空消息区（msgSeq 全局递增、不回退）
     const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
     const safeNick = (nicknameArg || '无名氏').replace(/[\\/:*?"<>|\s]/g, '').slice(0, 12) || '无名氏';
-    this.logBase = path.join(GAMES_DIR, `${stamp}-${safeNick}`);
+    this.logBase = path.join(GAMES_DIR, `${stamp}-${safeNick}-${Math.random().toString(36).slice(2, 6)}`);
 
     this.aiCount = Math.max(3, Math.min(8, Number(aiCount) || 5));
     const chosen = (Array.isArray(npcs) && npcs.length >= this.aiCount ? npcs : buildStockNPCs(this.aiCount)).slice(0, this.aiCount);
@@ -174,6 +176,11 @@ class Game {
     const gen = ++this.loopGen;
     const loop = async () => {
       while (this.loopGen === gen && this.phase === 'chat') {
+        // 活跃看门狗：前端轮询断流（标签页关闭/休眠）→ 挂起，恢复轮询自动续聊
+        if (Date.now() - (this.lastActivity || Date.now()) > ROOM_ACTIVE_TIMEOUT_MS) {
+          await sleep(3000);
+          continue;
+        }
         if (this.modeKind === 'scene') {
           // 场景模式：总预算到量 → 休息（玩家发言可唤醒），防止无限聊烧钱
           if (this.sceneAutoCount >= SCENE_MSG_CAP) {
@@ -632,6 +639,7 @@ class Game {
     return {
       phase: this.phase, round: this.round, topic: topicFor(this.round).text,
       difficulty: this.difficulty, winner: this.winner,
+      gen: this.gen || 0,
       mode: this.mode, modeLabel: MODES[this.mode]?.label || '经典',
       modeKind: this.modeKind,
       roundsTarget: this.mode === 'hunt' ? MODES.hunt.roundsTarget : null,

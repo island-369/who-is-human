@@ -26,7 +26,7 @@ function getRoom(id) {
 // 无房间（首次进入/房间已被回收）时的默认大厅视图
 function lobbyView() {
   return {
-    phase: 'lobby', round: 1, topic: '', difficulty: 3, winner: null,
+    phase: 'lobby', round: 1, topic: '', difficulty: 3, winner: null, gen: 0,
     mode: 'classic', modeLabel: '经典', modeKind: 'game', roundsTarget: null, goldenTickets: 0,
     abilities: { probe: 0 }, canVote: false, mock: isMock(),
     usage: { session: getUsage(), game: { calls: 0, totalTokens: 0, cost: 0 } },

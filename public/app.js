@@ -9,6 +9,7 @@ const initial = (name) => [...name][0] || '?';
 
 let state = null;
 let lastMsgId = 0;
+let lastGen = null; // 对局代号：变化 = 换局，清空消息区
 let pollTimer = null;
 let chosenDiff = 3;
 let chosenThink = true;
@@ -151,9 +152,9 @@ function renderMembers(s) {
 
 function renderMessages(s) {
   const box = $('messages');
+  if (s.gen !== lastGen) { box.innerHTML = ''; lastMsgId = 0; lastGen = s.gen; } // 换局清屏
   const last = s.messages[s.messages.length - 1];
   if (!last) { box.innerHTML = ''; lastMsgId = 0; return; }
-  if (last.id < lastMsgId) { box.innerHTML = ''; lastMsgId = 0; } // id 回退 = 新开局，重置
   for (const m of s.messages) {
     if (m.id <= lastMsgId) continue;
     lastMsgId = m.id;
