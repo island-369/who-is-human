@@ -10,6 +10,7 @@ const { DIFFICULTY_STYLES } = require('./personas');
 
 const PORT = Number(process.env.PORT || 3690);
 const game = new Game();
+const GAMES_DIR = path.join(__dirname, '..', 'games');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 
@@ -56,6 +57,53 @@ const server = http.createServer(async (req, res) => {
     else if (body.type === 'vote') out = game.playerVote(body.target);
     else if (body.type === 'startVote') out = await game.startVote();
     return send(res, out && out.ok === false ? 400 : 200, out);
+  }
+  // 退出对局回大厅：reset 会作废所有在途 AI 调用（gameGen 防护）
+  if (url.pathname === '/api/exit' && req.method === 'POST') {
+    game.reset();
+    return send(res, 200, { ok: true });
+  }
+  // 历史对局列表
+  if (url.pathname === '/api/logs' && req.method === 'GET') {
+    const list = [];
+    try {
+      for (const f of fs.readdirSync(GAMES_DIR)) {
+        if (!f.endsWith('.json')) continue;
+        try {
+          const d = JSON.parse(fs.readFileSync(path.join(GAMES_DIR, f), 'utf8'));
+          list.push({
+            file: f, md: f.replace(/\.json$/, '.md'),
+            startedAt: d.startedAt, endedAt: d.endedAt, roundCount: d.roundCount, winner: d.winner,
+            nickname: d.members?.find((m) => m.isPlayer)?.name || '?',
+            difficultyLabel: d.difficultyLabel, mock: d.mock, thinking: d.thinking,
+          });
+        } catch { /* 跳过损坏文件 */ }
+      }
+    } catch { /* 目录不存在 */ }
+    list.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+    return send(res, 200, list);
+  }
+  // 删除对局记录：json + md 一起删
+  if (url.pathname === '/api/logs' && req.method === 'DELETE') {
+    const file = url.searchParams.get('file') || '';
+    if (!/^[\w\u4e00-\u9fa5.-]+\.json$/.test(file) || file.includes('..')) {
+      return send(res, 400, { ok: false, error: '文件名不合法' });
+    }
+    const stem = path.basename(file).replace(/\.json$/, '');
+    for (const f of [`${stem}.json`, `${stem}.md`]) {
+      const p = path.join(GAMES_DIR, f);
+      if (path.dirname(p) === GAMES_DIR) fs.rmSync(p, { force: true });
+    }
+    return send(res, 200, { ok: true });
+  }
+  // 对局记录文件查看（/games/xxx.md），basename 防目录穿越
+  if (url.pathname.startsWith('/games/')) {
+    let f;
+    try { f = decodeURIComponent(path.basename(url.pathname)); } catch { return send(res, 400, 'bad path'); }
+    const p = path.join(GAMES_DIR, f);
+    if (!f || !fs.existsSync(p)) return send(res, 404, 'not found');
+    const type = f.endsWith('.md') ? 'text/markdown; charset=utf-8' : 'application/json; charset=utf-8';
+    return send(res, 200, fs.readFileSync(p), { 'Content-Type': type });
   }
 
   // ---- 静态文件 ----

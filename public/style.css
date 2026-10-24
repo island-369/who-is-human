@@ -43,6 +43,26 @@ body {
   background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--line);
 }
 .chip.mock { color: var(--warn); border-color: var(--warn); }
+.exit-btn {
+  background: transparent; color: var(--text-dim); border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+}
+.exit-btn.armed { color: var(--danger); border-color: var(--danger); }
+
+/* ---- lobby 历史对局 ---- */
+.games-list { margin-top: 18px; text-align: left; }
+.games-list h3 { font-size: 13px; color: var(--text-dim); margin-bottom: 8px; font-weight: 600; }
+.games-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin-bottom: 6px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; font-size: 12px;
+}
+.games-item .gi-info { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.games-item .gi-view { color: var(--accent); text-decoration: none; flex-shrink: 0; }
+.games-item .gi-del {
+  background: transparent; color: var(--text-dim); border: 1px solid var(--line);
+  border-radius: 8px; padding: 3px 9px; font-size: 11px; cursor: pointer; flex-shrink: 0;
+}
+.games-item .gi-del:hover { color: var(--danger); border-color: var(--danger); }
 
 /* ---- members strip ---- */
 .members-strip {

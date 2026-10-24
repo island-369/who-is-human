@@ -10,7 +10,8 @@ let pollTimer = null;
 let chosenDiff = 3;
 let chosenThink = true;
 let probeTarget = null;
-let startOpts = { nickname: '无名氏', difficulty: 3 };
+let startOpts = { nickname: '无名氏', difficulty: 3, thinking: true };
+let prevPhase = null;
 
 const phaseLabel = { chat: '闲聊中', vote: '投票', reveal: '本轮结算', end: '结束', lobby: '准备' };
 
@@ -52,7 +53,12 @@ function render(s) {
   $('chatBody').classList.toggle('hidden', !inGame);
   $('lobby').classList.toggle('hidden', inGame);
   $('mockBadge').classList.toggle('hidden', !s.mock);
-  if (!inGame) return;
+  if (!inGame) {
+    if (prevPhase !== 'lobby') renderGamesList(); // 只在回到大厅时刷新一次
+    prevPhase = 'lobby';
+    return;
+  }
+  prevPhase = s.phase;
 
   const aliveAIs = s.members.filter((m) => !m.isPlayer && m.alive).length;
   const aliveAll = s.members.filter((m) => m.alive).length;
@@ -215,6 +221,46 @@ async function doProbe() {
   } catch (e) { toast(e.message); }
 }
 
+// ---------- 退出对局 / 历史对局 ----------
+
+async function doExit() {
+  const btn = $('exitBtn');
+  if (!btn.dataset.armed) { // 两段确认，防误触
+    btn.dataset.armed = '1';
+    btn.textContent = '确认退出';
+    btn.classList.add('armed');
+    setTimeout(() => { delete btn.dataset.armed; btn.textContent = '退出'; btn.classList.remove('armed'); }, 3000);
+    return;
+  }
+  delete btn.dataset.armed;
+  btn.textContent = '退出';
+  btn.classList.remove('armed');
+  try { await api('/api/exit', {}); } catch (e) { toast(e.message); }
+}
+
+async function renderGamesList() {
+  const el = $('gamesList');
+  try {
+    const list = await api('/api/logs');
+    if (!list.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<h3>历史对局</h3>' + list.map((g) => {
+      const res = g.winner === 'human' ? '🏆人类胜' : g.winner === 'ai' ? '💀AI胜' : '未完成';
+      const when = (g.startedAt || '').slice(5, 16).replace('T', ' ');
+      return `<div class="games-item" data-file="${esc(g.file)}">
+        <span class="gi-info">${esc(when)} · ${esc(g.nickname)} · ${g.roundCount}轮 · ${res}${g.mock ? ' · MOCK' : ''}${g.thinking ? ' · 思考' : ''}</span>
+        <a class="gi-view" href="/games/${encodeURIComponent(g.md)}" target="_blank">查看</a>
+        <button class="gi-del">删除</button></div>`;
+    }).join('');
+    el.querySelectorAll('.gi-del').forEach((btn) => btn.addEventListener('click', async () => {
+      const file = btn.closest('.games-item').dataset.file;
+      try {
+        await fetch(`/api/logs?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
+        renderGamesList();
+      } catch { toast('删除失败'); }
+    }));
+  } catch { /* 服务未就绪等，忽略 */ }
+}
+
 // ---------- 大厅 ----------
 
 function initLobby() {
@@ -259,6 +305,7 @@ function bind() {
   $('probeBtn').addEventListener('click', openProbeModal);
   $('probeCancel').addEventListener('click', () => $('probeModal').classList.add('hidden'));
   $('probeGo').addEventListener('click', doProbe);
+  $('exitBtn').addEventListener('click', doExit);
 }
 
 async function poll() {
