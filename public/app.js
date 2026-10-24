@@ -13,11 +13,38 @@ let pollTimer = null;
 let chosenDiff = 3;
 let chosenThink = true;
 let chosenTotal = 6;
+let chosenMode = 'classic';
 let probeTarget = null;
 let startOpts = { nickname: '无名氏', difficulty: 3, thinking: true };
 let prevPhase = null;
 
 const phaseLabel = { chat: '闲聊中', vote: '投票', reveal: '本轮结算', end: '结束', lobby: '准备' };
+
+// 模式定义（与 server/modes.js 保持一致）
+const MODES = {
+  classic: { label: '经典', tagline: 'AI 伪装人类，揪出所有 AI' },
+  reversed: { label: '反转', tagline: '全员自称 AI，揪出唯一真人' },
+  hunt: { label: '猎杀', tagline: 'AI 联合围猎你，活过 4 轮' },
+  flash: { label: '闪电', tagline: '每轮 6 条封顶，自动开票' },
+};
+const MODE_DESC = {
+  classic: 'AI 们伪装成人类。每轮投票放逐，在你不被放逐的前提下找出所有 AI。',
+  reversed: '群里每个人都公开声称自己是 AI，但混着 1 个真人类 NPC 也在硬装。谁装得不像？投出去。把 AI 全投完而人类还活着，你输。',
+  hunt: '所有 AI 都知道你是唯一人类，目标是在 4 轮内把你投出去。撑满 4 轮即胜。',
+  flash: '经典规则 + 极速节奏：每轮 AI 最多 6 条发言，到顶自动进入投票。',
+};
+function endText(mode, winner) {
+  if (mode === 'reversed') {
+    if (winner === 'human') return { title: '🏆 真人类落网！', desc: '你把藏在群里、硬装 AI 的那个人类揪出来了。<br>这局是人类的胜利，也是你的胜利。' };
+    return { title: '💀 猎物逃走了', desc: '唯一的真人类笑到了最后。<br>装 AI 这门手艺，人类还得练。' };
+  }
+  if (mode === 'hunt') {
+    if (winner === 'human') return { title: '🏆 你活下来了！', desc: 'AI 们的围猎宣告失败。<br>4 轮之后，你还在群里。' };
+    return { title: '💀 围猎成功', desc: 'AI 们心照不宣地把票投给了你。<br>下次试试带点节奏反打。' };
+  }
+  if (winner === 'human') return { title: '🏆 你赢了！', desc: '所有伪装成人类的 AI 都被你揪了出来。<br>这场反向图灵测试，人类胜。' };
+  return { title: '💀 你被放逐了', desc: '你明明是人类，却被全群当成了 AI 投出去。<br>AI 们的伪装，赢了。' };
+}
 
 function avatarHtml(m, size) {
   return `<div class="avatar" style="background:${colorOf(m.id)};width:${size || 34}px;height:${size || 34}px">${initial(m.name)}</div>`;
@@ -85,10 +112,9 @@ function render(s) {
   renderComposer(s);
 
   if (s.phase === 'end') {
-    $('endTitle').textContent = s.winner === 'human' ? '🏆 你赢了！' : '💀 你被放逐了';
-    $('endDesc').innerHTML = s.winner === 'human'
-      ? '所有伪装成人类的 AI 都被你揪了出来。<br>这场反向图灵测试，人类胜。'
-      : '你明明是人类，却被全群当成了 AI 投出去。<br>AI 们的伪装，赢了。';
+    const et = endText(s.mode, s.winner);
+    $('endTitle').textContent = et.title;
+    $('endDesc').innerHTML = et.desc;
     $('endIdentities').innerHTML = s.members.map((m) => `
       <div class="identity-card ${m.revealed === 'ai' ? 'is-ai' : 'is-human'}">
         ${avatarHtml(m, 26)} ${esc(m.name)} ${m.isPlayer ? '（你·人类）' : m.revealed === 'ai' ? '🤖 AI' : '👤'}
@@ -277,6 +303,16 @@ async function renderGamesList() {
 // ---------- 大厅 ----------
 
 function initLobby() {
+  $('modeOptions').innerHTML = Object.entries(MODES).map(([k, m]) =>
+    `<div class="diff-opt ${k === chosenMode ? 'sel' : ''}" data-mode="${k}" title="${m.tagline}">${m.label}</div>`).join('');
+  $('modeDesc').textContent = MODE_DESC[chosenMode];
+  $('modeOptions').querySelectorAll('[data-mode]').forEach((el) =>
+    el.addEventListener('click', () => {
+      chosenMode = el.dataset.mode;
+      $('modeOptions').querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
+      el.classList.add('sel');
+      $('modeDesc').textContent = MODE_DESC[chosenMode];
+    }));
   const counts = [5, 6, 7, 8, 9];
   $('countOptions').innerHTML = counts.map((n) =>
     `<div class="diff-opt ${n === chosenTotal ? 'sel' : ''}" data-count="${n}">${n}人</div>`).join('');
@@ -305,7 +341,7 @@ function initLobby() {
       el.classList.add('sel');
     }));
   $('startBtn').addEventListener('click', async () => {
-    startOpts = { nickname: $('nicknameInput').value.trim() || '无名氏', difficulty: chosenDiff, thinking: chosenThink, aiCount: chosenTotal - 1 };
+    startOpts = { nickname: $('nicknameInput').value.trim() || '无名氏', difficulty: chosenDiff, thinking: chosenThink, aiCount: chosenTotal - 1, mode: chosenMode };
     try {
       $('startBtn').disabled = true;
       $('startBtn').textContent = '群友入场中…';

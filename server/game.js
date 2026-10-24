@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { DIFFICULTY_STYLES, topicFor, PALETTE, buildStockNPCs } = require('./personas');
+const { MODES } = require('./modes');
 const { buildChatPrompt, buildVotePrompt, buildProbePrompt } = require('./prompts');
 const { isMock, chat, chatJSON, mockChat, mockVote, mockProbe, MODEL, getUsage } = require('./llm');
 
@@ -31,7 +32,7 @@ function roundLogsToMarkdown(r) {
   const L = [];
   L.push('# Who is Human? 对局记录', '');
   L.push(`- 开局：${r.startedAt}${r.endedAt ? ` ｜ 终局：${r.endedAt}` : '（进行中）'}`);
-  L.push(`- 配置：难度 ${r.difficultyLabel}${r.thinking ? ' ｜ 深度思考开' : ''}${r.mock ? ' ｜ MOCK 模式' : ` ｜ 模型 ${r.model}`}`);
+  L.push(`- 配置：模式 ${r.modeLabel || '经典'} ｜ 难度 ${r.difficultyLabel}${r.thinking ? ' ｜ 深度思考开' : ''}${r.mock ? ' ｜ MOCK 模式' : ` ｜ 模型 ${r.model}`}`);
   const outcome = r.winner === 'human' ? '🏆 人类胜利' : r.winner === 'ai' ? '💀 AI 胜利（玩家被放逐）' : '进行中';
   L.push(`- 结果：${outcome}，共 ${r.roundCount} 轮`);
   L.push(`- 成员：${r.members.map((m) => `${m.name}${m.isPlayer ? '（你）' : ''}=${m.revealed === 'ai' ? 'AI' : m.revealed === 'human' ? '人类' : '?'}${m.alive ? '' : '（出局）'}`).join('，')}`);
@@ -51,12 +52,14 @@ class Game {
     this.reset('无名氏', 3);
   }
 
-  reset(nicknameArg = '无名氏', difficulty = 3, thinking = true, aiCount = 5, npcs = null) {
+  reset(nicknameArg = '无名氏', difficulty = 3, thinking = true, aiCount = 5, npcs = null, mode = 'classic') {
     this._clearTimers();
     this.phase = 'lobby';
     this.round = 1;
     this.difficulty = difficulty;
     this.thinking = !!thinking; // AI 深度思考：开=发言更慢更像人，投票理由更扎实
+    this.mode = MODES[mode] ? mode : 'classic';
+    this.humanNpcId = null; // 反转场：藏匿的真人类 NPC 的成员 id
     this.winner = null;
     this.evicted = null;
     this.votes = {}; // voterId -> {target, reason}
@@ -92,6 +95,11 @@ class Game {
       isPlayer: false, alive: true, typing: false, revealed: null,
       persona: { id: `npc${i}`, name: p.name, sheet: p.sheet },
     }))];
+    if (this.mode === 'reversed') {
+      const npc = pick(this.members.filter((m) => !m.isPlayer));
+      npc.humanNPC = true; // 唯一真人类（伪装成AI）
+      this.humanNpcId = npc.id;
+    }
   }
 
   _clearTimers() {
@@ -117,7 +125,14 @@ class Game {
   start() {
     if (this.phase !== 'lobby') return;
     this.phase = 'chat';
-    this.sys('游戏开始：「周末搭子群」共 6 人，其中 5 人是伪装成人类的 AI。每轮聊天后全群投票放逐一人，在你不被放逐的前提下找出所有 AI。');
+    const n = this.members.length;
+    const announce = {
+      classic: `游戏开始：「周末搭子群」共 ${n} 人，其中 ${this.aiCount} 人是伪装成人类的 AI。每轮聊天后全群投票放逐一人，在你不被放逐的前提下找出所有 AI。`,
+      reversed: `反转场开始：群里 ${n} 个人人都公开声称自己是 AI——但其中混着 1 个真人类！谁装 AI 装得不像？把他投出去你就赢；把 AI 全投完而人类还活着，你输。`,
+      hunt: `猎杀场开始：所有 AI 都收到了情报，知道你是唯一的人类，它们要在 ${MODES.hunt.roundsTarget} 轮内把你投出去。你不揪人，撑满 ${MODES.hunt.roundsTarget} 轮即胜。`,
+      flash: `闪电场开始：节奏拉满——每轮 AI 最多 ${MODES.flash.msgCap} 条发言，到顶自动进入投票。规则同经典：揪出所有 AI，别被投出去。`,
+    };
+    this.sys(announce[this.mode]);
     this.sys(`【第 1 轮话题】${topicFor(1).text}`);
     this._roundStartIdx = this.messages.length;
     this._startChatLoop();
@@ -129,7 +144,9 @@ class Game {
     const gen = ++this.loopGen;
     const loop = async () => {
       while (this.loopGen === gen && this.phase === 'chat') {
-        if (this.aiMsgThisRound >= AI_MSG_CAP) { // 轮内封顶：AI 停止自动互聊，等玩家动作
+        const cap = MODES[this.mode]?.msgCap || AI_MSG_CAP;
+        if (this.aiMsgThisRound >= cap) { // 轮内封顶：AI 停止自动互聊
+          if (MODES[this.mode]?.autoVote) { await this.startVote(); break; } // 闪电场：到顶自动开票
           if (!this.capHintShown) {
             this.capHintShown = true;
             this.sys('（群里安静下来了——本轮 AI 发言已达上限。你可以继续发言引他们接话，或直接发起投票。）');
@@ -172,14 +189,14 @@ class Game {
         const recentOthers = this.messages.filter((m) => m.kind === 'chat' && m.from !== member.id).slice(-8);
         text = isMock()
           ? await mockProbe()
-          : await chat([{ role: 'user', content: buildProbePrompt({ persona: member.persona, question, recentOthers, playerName: this.player.name }) }], { thinking: this.thinking });
+          : await chat([{ role: 'user', content: buildProbePrompt({ persona: member.persona, question, recentOthers, playerName: this.player.name, mode: this.mode, isHumanNPC: !!member.humanNPC }) }], { thinking: this.thinking });
       } else {
         text = isMock()
           ? await mockChat({ persona: member.persona })
           : await chat([{ role: 'user', content: buildChatPrompt({
               persona: member.persona, playerName: this.player.name, topic: topicFor(this.round).text,
               history: this.messages.filter((m) => m.kind === 'chat'), instruction: instruction || this._randomInstruction(),
-              difficulty: this.difficulty,
+              difficulty: this.difficulty, mode: this.mode, isHumanNPC: !!member.humanNPC,
             }) }], { thinking: this.thinking });
       }
       if (text) text = text.replace(/^["「『]|["」』]$/g, '').trim().slice(0, 200); // 防长篇大论
@@ -202,7 +219,10 @@ class Game {
   }
 
   _randomInstruction() {
-    if (this.aiMsgThisRound === 0) return '聊聊本轮话题，给出你自己的具体经历或观点（一两句即可）。';
+    if (this.aiMsgThisRound === 0) {
+      if (this.mode === 'reversed') return '聊聊本轮话题，并在发言里顺带宣告你是AI（用你的角色风格说，比如"本人AI，只对数据类话题有反应"这种搞笑宣言也行）。';
+      return '聊聊本轮话题，给出你自己的具体经历或观点（一两句即可）。';
+    }
     const r = Math.random();
     if (r < 0.12 && !this.accusationDone && this.round >= 2) {
       this.accusationDone = true;
@@ -256,7 +276,10 @@ class Game {
     this.loopGen++; // 停掉聊天循环
     const gen = this.gameGen; // 收票期间若 reset，弃票
     for (const m of this.members) m.typing = false;
-    this.sys(`第 ${this.round} 轮投票开始：投出你觉得最像 AI 的人。`);
+    const voteAsk = this.mode === 'reversed' ? '投出你怀疑的"真人装AI"'
+      : this.mode === 'hunt' ? '投出你最怀疑的人'
+      : '投出你觉得最像 AI 的人';
+    this.sys(`第 ${this.round} 轮投票开始：${voteAsk}。`);
     const ais = this.aliveAIs();
     // mock 从众：一半票会跟风同一个目标，模拟真人局选票扎堆
     const herdTarget = isMock() ? pick(this.aliveMembers()).name : null;
@@ -273,6 +296,7 @@ class Game {
           persona: ai.persona, playerName: this.player.name,
           aliveMembers: this.aliveMembers().map((m) => ({ id: m.id, name: m.name })),
           history: this.messages.filter((m) => m.kind === 'chat'), topic: topicFor(this.round).text,
+          mode: this.mode, isHumanNPC: !!ai.humanNPC,
         }) }], { thinking: this.thinking });
         const t = this.byName(out.target);
         const target = t && t.alive && t.id !== ai.id ? t.name : pick(this.aliveMembers().filter((m) => m.id !== ai.id)).name;
@@ -326,12 +350,24 @@ class Game {
     this.tieStreak = 0;
     if (victim.isPlayer) {
       victim.revealed = 'human';
-      this.sys(`唱票结果：${table}。${how}${victim.name} 被放逐——你明明是人类，却被当成了 AI。`);
+      const text = this.mode === 'reversed'
+        ? `唱票结果：${table}。${how}${victim.name} 被放逐——他们以为你才是那个真人…可你真的是人类啊。`
+        : `唱票结果：${table}。${how}${victim.name} 被放逐——你明明是人类，却被当成了 AI。`;
+      this.sys(text);
       this._end('ai');
       return;
     }
+    if (victim.humanNPC) { // 反转场：揪出真人类 = 玩家胜利
+      victim.revealed = 'human';
+      this.sys(`唱票结果：${table}。${how}${victim.name} 被放逐——TA 就是藏在群里的人类！你赢了。`);
+      this._end('human');
+      return;
+    }
     victim.revealed = 'ai';
-    this.sys(`唱票结果：${table}。${how}${victim.name} 被放逐——它确实是 AI！`);
+    const text = this.mode === 'reversed'
+      ? `唱票结果：${table}。${how}${victim.name} 被放逐——如假包换的 AI（虽然它一直自称AI）。`
+      : `唱票结果：${table}。${how}${victim.name} 被放逐——它确实是 AI！`;
+    this.sys(text);
   }
 
   _tally() {
@@ -356,8 +392,19 @@ class Game {
     }
     this._pushRoundLog();
     if (this.phase === 'end') { this.saveLog(); return; }
-    if (this.aliveAIs().length === 0) {
+    if (this.mode === 'reversed' && this.aliveAIs().length === 0) {
+      // 反转场：AI 全投完 → 唯一人类笑到最后 → 玩家输
+      this.sys('所有 AI 都被投完了，唯一的真人类笑到了最后——你输了。');
+      this._end('ai');
+      return;
+    }
+    if (this.mode !== 'reversed' && this.aliveAIs().length === 0) {
       this.sys('所有 AI 都被找出来了，你赢下了这场反向图灵测试！');
+      this._end('human');
+      return;
+    }
+    if (this.mode === 'hunt' && this.round >= MODES.hunt.roundsTarget && this.player.alive) {
+      this.sys(`你撑过了 ${MODES.hunt.roundsTarget} 轮围猎，AI 们的猎杀失败——你赢了！`);
       this._end('human');
       return;
     }
@@ -391,6 +438,8 @@ class Game {
       endedAt: this.phase === 'end' ? new Date().toISOString() : null,
       difficulty: this.difficulty,
       difficultyLabel: DIFFICULTY_STYLES[this.difficulty]?.label || String(this.difficulty),
+      mode: this.mode,
+      modeLabel: MODES[this.mode]?.label || '经典',
       thinking: this.thinking,
       mock: isMock(),
       model: isMock() ? null : MODEL,
@@ -435,7 +484,7 @@ class Game {
     this.phase = 'end';
     this.loopGen++;
     this._clearTimers();
-    for (const m of this.members) { m.typing = false; m.revealed = m.isPlayer ? 'human' : (m.revealed || 'ai'); }
+    for (const m of this.members) { m.typing = false; m.revealed = m.isPlayer ? 'human' : (m.revealed || (m.humanNPC ? 'human' : 'ai')); }
     this.sys(winner === 'human' ? '🏁 人类胜利！' : '🏁 AI 阵营获胜。');
     this.saveLog();
   }
@@ -466,6 +515,8 @@ class Game {
     return {
       phase: this.phase, round: this.round, topic: topicFor(this.round).text,
       difficulty: this.difficulty, winner: this.winner,
+      mode: this.mode, modeLabel: MODES[this.mode]?.label || '经典',
+      roundsTarget: this.mode === 'hunt' ? MODES.hunt.roundsTarget : null,
       abilities: this.abilities, canVote: this.canStartVote(),
       mock: isMock(), usage,
       members: this.members.map((m) => ({

@@ -47,7 +47,7 @@ const server = http.createServer(async (req, res) => {
     const difficulty = DIFFICULTY_STYLES[body.difficulty] ? Number(body.difficulty) : 3;
     const aiCount = Math.max(3, Math.min(8, Number(body.aiCount) || 5));
     const npcs = await generateNPCs(aiCount); // 真模型现场生成人设（1次调用），mock/失败回退内置池
-    game.reset(body.nickname, difficulty, body.thinking !== false, aiCount, npcs);
+    game.reset(body.nickname, difficulty, body.thinking !== false, aiCount, npcs, body.mode);
     game.start();
     return send(res, 200, { ok: true, mock: isMock() });
   }
