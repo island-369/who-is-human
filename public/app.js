@@ -106,7 +106,7 @@ function renderMessages(s) {
       el.className = 'msg-row' + (mine ? ' mine' : '');
       el.innerHTML = `
         ${avatarHtml({ id: m.from, name: m.name })}
-        <div><div class="msg-meta">${esc(m.name)}</div><div class="bubble">${esc(m.text)}</div></div>`;
+        <div class="msg-col"><div class="msg-meta">${esc(m.name)}</div><div class="bubble">${esc(m.text)}</div></div>`;
       box.appendChild(el);
     }
     box.scrollTop = box.scrollHeight;
