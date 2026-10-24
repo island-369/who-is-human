@@ -1,8 +1,12 @@
 // 游戏核心：状态机 + AI 发言调度（时序拟人）+ 投票 + 放逐 + 胜负判定
 // 阶段流转：lobby → chat → vote → reveal → chat … → end
-const { PERSONAS, topicFor } = require('./personas');
+const fs = require('node:fs');
+const path = require('node:path');
+const { PERSONAS, DIFFICULTY_STYLES, topicFor } = require('./personas');
 const { buildChatPrompt, buildVotePrompt, buildProbePrompt } = require('./prompts');
-const { isMock, chat, chatJSON, mockChat, mockVote, mockProbe } = require('./llm');
+const { isMock, chat, chatJSON, mockChat, mockVote, mockProbe, MODEL } = require('./llm');
+
+const GAMES_DIR = path.join(__dirname, '..', 'games');
 
 const NUM_AI = 5;
 const TYPING_BASE = 1200; // 打字耗时基线
@@ -21,6 +25,25 @@ const SCALE = Math.max(0.05, Number(process.env.TIMESCALE || 1)); // 测试提�
 const ms = (x) => Math.round(x * SCALE);
 
 let msgSeq = 1;
+
+// 对局快照 → 可读 markdown（复盘伪装效果用）
+function roundLogsToMarkdown(r) {
+  const L = [];
+  L.push('# Who is Human? 对局记录', '');
+  L.push(`- 开局：${r.startedAt}${r.endedAt ? ` ｜ 终局：${r.endedAt}` : '（进行中）'}`);
+  L.push(`- 配置：难度 ${r.difficultyLabel}${r.mock ? ' ｜ MOCK 模式' : ` ｜ 模型 ${r.model}`}`);
+  const outcome = r.winner === 'human' ? '🏆 人类胜利' : r.winner === 'ai' ? '💀 AI 胜利（玩家被放逐）' : '进行中';
+  L.push(`- 结果：${outcome}，共 ${r.roundCount} 轮`);
+  L.push(`- 成员：${r.members.map((m) => `${m.name}${m.isPlayer ? '（你）' : ''}=${m.revealed === 'ai' ? 'AI' : m.revealed === 'human' ? '人类' : '?'}${m.alive ? '' : '（出局）'}`).join('，')}`);
+  for (const rd of r.rounds) {
+    L.push('', `## 第 ${rd.round} 轮`, '', `**话题**：${rd.topic}`, '', '### 聊天', '');
+    for (const m of rd.messages) L.push(m.kind === 'system' ? `> ${m.text}` : `**${m.name}**：${m.text}`);
+    L.push('', '### 投票', '');
+    for (const v of rd.votes) L.push(`- ${v.voter} → **${v.target}**${v.reason ? `（${v.reason}）` : ''}`);
+    if (rd.result) L.push('', `**结果**：${rd.result}`);
+  }
+  return L.join('\n') + '\n';
+}
 
 class Game {
   constructor() {
@@ -45,6 +68,15 @@ class Game {
     this.tieStreak = 0; // 连续平票轮数（防死锁）
     this.messages = [];
     this.loopGen = 0; // 聊天循环代数，防止双开
+    this.roundLogs = [];
+    this._roundStartIdx = 0;
+
+    // 对局留档：固定文件名（开局时间+昵称），每轮结算时覆盖写入
+    const d = new Date();
+    this.startedAt = d;
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
+    const safeNick = (nicknameArg || '无名氏').replace(/[\\/:*?"<>|\s]/g, '').slice(0, 12) || '无名氏';
+    this.logBase = path.join(GAMES_DIR, `${stamp}-${safeNick}`);
 
     const shuffled = [...PERSONAS].sort(() => Math.random() - 0.5).slice(0, NUM_AI);
     let nickname = (nicknameArg || '无名氏').slice(0, 12);
@@ -78,6 +110,7 @@ class Game {
     this.phase = 'chat';
     this.sys('游戏开始：「周末搭子群」共 6 人，其中 5 人是伪装成人类的 AI。每轮聊天后全群投票放逐一人，在你不被放逐的前提下找出所有 AI。');
     this.sys(`【第 1 轮话题】${topicFor(1).text}`);
+    this._roundStartIdx = this.messages.length;
     this._startChatLoop();
   }
 
@@ -301,14 +334,62 @@ class Game {
     } else {
       this._evict(this.byName(entries[0][0]), table, '');
     }
-    if (this.phase === 'end') return;
+    this._pushRoundLog();
+    if (this.phase === 'end') { this.saveLog(); return; }
     if (this.aliveAIs().length === 0) {
       this.sys('所有 AI 都被找出来了，你赢下了这场反向图灵测试！');
       this._end('human');
       return;
     }
+    this.saveLog();
     this.phase = 'reveal';
     this._later(() => this._nextRound(), ms(2200));
+  }
+
+  // 把本轮（话题/聊天/投票/结果）快照进对局留档
+  _pushRoundLog() {
+    const lastSys = [...this.messages].reverse().find((m) => m.kind === 'system');
+    this.roundLogs.push({
+      round: this.round,
+      topic: topicFor(this.round).text,
+      messages: this.messages.slice(this._roundStartIdx).map((m) => ({ kind: m.kind, name: m.name, text: m.text })),
+      votes: Object.entries(this.votes).map(([vid, v]) => ({
+        voter: this.members.find((m) => m.id === vid)?.name || vid,
+        target: v.target, reason: v.reason || null,
+      })),
+      result: lastSys ? lastSys.text : '',
+    });
+    this._roundStartIdx = this.messages.length;
+  }
+
+  // ---------- 对局留档 ----------
+
+  _snapshot() {
+    return {
+      version: 1,
+      startedAt: this.startedAt?.toISOString() || null,
+      endedAt: this.phase === 'end' ? new Date().toISOString() : null,
+      difficulty: this.difficulty,
+      difficultyLabel: DIFFICULTY_STYLES[this.difficulty]?.label || String(this.difficulty),
+      mock: isMock(),
+      model: isMock() ? null : MODEL,
+      winner: this.winner,
+      roundCount: this.round,
+      members: this.members.map((m) => ({ name: m.name, isPlayer: !!m.isPlayer, alive: m.alive, revealed: m.revealed || null })),
+      rounds: this.roundLogs,
+    };
+  }
+
+  saveLog() {
+    try {
+      if (!fs.existsSync(GAMES_DIR)) fs.mkdirSync(GAMES_DIR, { recursive: true });
+      const record = this._snapshot();
+      fs.writeFileSync(`${this.logBase}.json`, JSON.stringify(record, null, 2));
+      fs.writeFileSync(`${this.logBase}.md`, roundLogsToMarkdown(record));
+      if (this.phase === 'end') console.log(`对局记录已保存：${this.logBase}.md`);
+    } catch (e) {
+      console.error('保存对局记录失败:', e.message);
+    }
   }
 
   _nextRound() {
@@ -333,6 +414,7 @@ class Game {
     this._clearTimers();
     for (const m of this.members) { m.typing = false; m.revealed = m.isPlayer ? 'human' : (m.revealed || 'ai'); }
     this.sys(winner === 'human' ? '🏁 人类胜利！' : '🏁 AI 阵营获胜。');
+    this.saveLog();
   }
 
   // ---------- 给前端的脱敏视图 ----------

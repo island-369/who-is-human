@@ -10,6 +10,9 @@ build/
 .env
 .env.*
 
+# 对局记录（本地留档）
+games/
+
 # 日志
 *.log
 

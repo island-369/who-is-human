@@ -40,6 +40,7 @@ who-is-human/
 ├── public/            # 前端：群聊 UI（消息流 / 打字指示 / 唱票动画 / 质询弹窗 / 结算）
 ├── scripts/
 │   └── e2e.mjs        # 端到端流程验证脚本（22 项断言全通过）
+├── games/             # 对局留档（gitignore）：每局一份 JSON + 可读 Markdown，每轮结算即写入
 └── README.md
 ```
 
