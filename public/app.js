@@ -53,7 +53,16 @@ function render(s) {
   $('chatBody').classList.toggle('hidden', !inGame);
   $('lobby').classList.toggle('hidden', inGame);
   $('mockBadge').classList.toggle('hidden', !s.mock);
+  if (s.usage) {
+    const g = s.usage.game || {}, ses = s.usage.session || {};
+    $('usageChip').textContent = g.cost > 0 ? `💰 本局 $${g.cost.toFixed(4)}` : `💰 本局 ${Math.round((g.totalTokens || 0) / 100) / 10}k tok`;
+    $('usageChip').title = `本次运行累计：${ses.calls || 0} 次调用 · ${ses.totalTokens || 0} tokens · $${(ses.cost || 0).toFixed(4)}`;
+  }
   if (!inGame) {
+    if (s.usage) {
+      const ses = s.usage.session || {};
+      $('lobbyHint').textContent = `本次运行 API 消耗：${ses.calls || 0} 次调用 · ${ses.totalTokens || 0} tokens · $${(ses.cost || 0).toFixed(4)}（每轮 AI 自动发言上限 16 条）`;
+    }
     if (prevPhase !== 'lobby') renderGamesList(); // 只在回到大厅时刷新一次
     prevPhase = 'lobby';
     return;

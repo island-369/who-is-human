@@ -5,7 +5,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Game } = require('./game');
-const { isMock, MODEL } = require('./llm');
+const { isMock, MODEL, getUsage } = require('./llm');
 const { DIFFICULTY_STYLES } = require('./personas');
 
 const PORT = Number(process.env.PORT || 3690);
@@ -104,6 +104,27 @@ const server = http.createServer(async (req, res) => {
     if (!f || !fs.existsSync(p)) return send(res, 404, 'not found');
     const type = f.endsWith('.md') ? 'text/markdown; charset=utf-8' : 'application/json; charset=utf-8';
     return send(res, 200, fs.readFileSync(p), { 'Content-Type': type });
+  }
+
+  // API 消耗汇总：本次运行（内存）+ 历史累计（usage.jsonl）
+  if (url.pathname === '/api/usage' && req.method === 'GET') {
+    const session = getUsage();
+    const allTime = { calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0 };
+    try {
+      const lines = fs.readFileSync(path.join(GAMES_DIR, 'usage.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
+      for (const l of lines) {
+        try {
+          const j = JSON.parse(l);
+          allTime.calls++;
+          allTime.promptTokens += j.p || 0;
+          allTime.completionTokens += j.c || 0;
+          allTime.totalTokens += (j.p || 0) + (j.c || 0);
+          allTime.cost += j.cost || 0;
+        } catch { /* 跳过坏行 */ }
+      }
+    } catch { /* 无记录文件 */ }
+    allTime.cost = +allTime.cost.toFixed(5);
+    return send(res, 200, { session, allTime, costSource: 'OpenRouter 返回的 usage.cost，缺失时记 0（仅有 token 计数）' });
   }
 
   // ---- 静态文件 ----

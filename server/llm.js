@@ -20,7 +20,32 @@ const FORCE_MOCK = process.env.MOCK === '1';
 
 const isMock = () => FORCE_MOCK || !(BASE_URL && API_KEY && MODEL);
 
-async function chat(messages, { temperature = 0.95, max_tokens = 1200, thinking = false } = {}) {
+// ---------- API 消耗记录 ----------
+// 每次真实调用记一笔：内存聚合（/api/state 实时展示）+ games/usage.jsonl 落盘（跨重启累计）
+const usage = { calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0 };
+const USAGE_FILE = path.join(__dirname, '..', 'games', 'usage.jsonl');
+
+function noteUsage(data, kind) {
+  const u = data.usage || {};
+  const p = u.prompt_tokens || 0;
+  const c = u.completion_tokens || 0;
+  const cost = Number(u.cost) || 0; // OpenRouter 直接返回美元成本；缺失则记 0（仅 token 计数）
+  usage.calls++;
+  usage.promptTokens += p;
+  usage.completionTokens += c;
+  usage.totalTokens += u.total_tokens || (p + c);
+  usage.cost += cost;
+  try {
+    fs.mkdirSync(path.dirname(USAGE_FILE), { recursive: true });
+    fs.appendFileSync(USAGE_FILE, JSON.stringify({ t: new Date().toISOString(), kind, model: data.model || MODEL, p, c, cost }) + '\n');
+  } catch { /* 落盘失败不影响游戏 */ }
+}
+
+function getUsage() {
+  return { ...usage, cost: +usage.cost.toFixed(5) };
+}
+
+async function chat(messages, { temperature = 0.95, max_tokens = 1200, thinking = false, kind = 'chat' } = {}) {
   const body = { model: MODEL, messages, temperature, max_tokens };
   if (/openrouter/i.test(BASE_URL)) body.reasoning = { enabled: !!thinking }; // 思考开关：开=更像人但慢且贵
   if (thinking) body.max_tokens = Math.max(max_tokens, 3000); // 思考内容也占 token，额度放宽
@@ -34,13 +59,14 @@ async function chat(messages, { temperature = 0.95, max_tokens = 1200, thinking 
     throw new Error(`LLM ${res.status}: ${bodyText.slice(0, 300)}`);
   }
   const data = await res.json();
+  noteUsage(data, kind);
   const text = data.choices?.[0]?.message?.content?.trim();
   if (!text) throw new Error('LLM 返回为空');
   return text;
 }
 
-async function chatJSON(messages, { temperature = 0.7, max_tokens = 2000, thinking = false } = {}) {
-  const raw = await chat(messages, { temperature, max_tokens, thinking });
+async function chatJSON(messages, { temperature = 0.7, max_tokens = 2000, thinking = false, kind = 'vote' } = {}) {
+  const raw = await chat(messages, { temperature, max_tokens, thinking, kind });
   const m = raw.match(/\{[\s\S]*\}/); // 容错：剥掉 markdown 代码块等杂质
   if (!m) throw new Error(`无法解析 JSON: ${raw.slice(0, 200)}`);
   return JSON.parse(m[0]);
@@ -124,4 +150,4 @@ async function mockProbe() {
   return pick(MOCK_PROBE);
 }
 
-module.exports = { isMock, chat, chatJSON, mockChat, mockVote, mockProbe, MODEL, BASE_URL };
+module.exports = { isMock, chat, chatJSON, mockChat, mockVote, mockProbe, MODEL, BASE_URL, getUsage };

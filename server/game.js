@@ -4,11 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { PERSONAS, DIFFICULTY_STYLES, topicFor } = require('./personas');
 const { buildChatPrompt, buildVotePrompt, buildProbePrompt } = require('./prompts');
-const { isMock, chat, chatJSON, mockChat, mockVote, mockProbe, MODEL } = require('./llm');
+const { isMock, chat, chatJSON, mockChat, mockVote, mockProbe, MODEL, getUsage } = require('./llm');
 
 const GAMES_DIR = path.join(__dirname, '..', 'games');
 
 const NUM_AI = 5;
+const AI_MSG_CAP = Number(process.env.AI_MSG_CAP || 16); // 每轮 AI 自动发言上限：防止挂机烧钱
 const TYPING_BASE = 1200; // 打字耗时基线
 const TYPING_PER_CHAR = 55;
 const TYPING_MAX = 6000;
@@ -72,6 +73,8 @@ class Game {
     this.gameGen = (this.gameGen || 0) + 1; // 对局代号：reset 后作废所有跨局的在途调用
     this.roundLogs = [];
     this._roundStartIdx = 0;
+    this.capHintShown = false;
+    this.usageAtStart = getUsage(); // 本局消耗基线
 
     // 对局留档：固定文件名（开局时间+昵称），每轮结算时覆盖写入
     const d = new Date();
@@ -122,6 +125,13 @@ class Game {
     const gen = ++this.loopGen;
     const loop = async () => {
       while (this.loopGen === gen && this.phase === 'chat') {
+        if (this.aiMsgThisRound >= AI_MSG_CAP) { // 轮内封顶：AI 停止自动互聊，等玩家动作
+          if (!this.capHintShown) {
+            this.capHintShown = true;
+            this.sys('（群里安静下来了——本轮 AI 发言已达上限。你可以继续发言引他们接话，或直接发起投票。）');
+          }
+          break;
+        }
         const speaker = this._pickNextSpeaker();
         if (!speaker) break;
         await this._aiSpeak(speaker);
@@ -380,6 +390,7 @@ class Game {
       thinking: this.thinking,
       mock: isMock(),
       model: isMock() ? null : MODEL,
+      usage: this._gameUsage(),
       winner: this.winner,
       roundCount: this.round,
       members: this.members.map((m) => ({ name: m.name, isPlayer: !!m.isPlayer, alive: m.alive, revealed: m.revealed || null })),
@@ -409,6 +420,7 @@ class Game {
     this.evicted = null;
     this.aiMsgThisRound = 0;
     this.accusationDone = false;
+    this.capHintShown = false;
     this.phase = 'chat';
     this.sys(`【第 ${this.round} 轮话题】${topicFor(this.round).text}`);
     this._startChatLoop();
@@ -426,8 +438,16 @@ class Game {
 
   // ---------- 给前端的脱敏视图 ----------
 
+  _gameUsage() {
+    const u = getUsage();
+    const s = this.usageAtStart || { calls: 0, totalTokens: 0, cost: 0 };
+    return { calls: Math.max(0, u.calls - s.calls), totalTokens: Math.max(0, u.totalTokens - s.totalTokens), cost: Math.max(0, +(u.cost - s.cost).toFixed(5)) };
+  }
+
   view() {
     const revealAll = this.phase === 'end';
+    const u = getUsage();
+    const usage = { session: u, game: this._gameUsage() };
     const voting = this.phase === 'vote' ? {
       total: this.aliveMembers().length,
       revealedCount: this.revealedCount,
@@ -443,7 +463,7 @@ class Game {
       phase: this.phase, round: this.round, topic: topicFor(this.round).text,
       difficulty: this.difficulty, winner: this.winner,
       abilities: this.abilities, canVote: this.canStartVote(),
-      mock: isMock(),
+      mock: isMock(), usage,
       members: this.members.map((m) => ({
         id: m.id, name: m.name, alive: m.alive, isPlayer: !!m.isPlayer, typing: m.typing,
         revealed: m.revealed || (revealAll ? (m.isPlayer ? 'human' : 'ai') : null),
