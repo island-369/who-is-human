@@ -116,6 +116,14 @@ class Game {
     this.timers.clear();
   }
 
+  // 房间销毁（退出/闲置回收）：作废在途调用、清定时器
+  dispose() {
+    this.gameGen++;
+    this.loopGen++;
+    this.phase = 'lobby';
+    this._clearTimers();
+  }
+
   _later(fn, delay) {
     const t = setTimeout(() => { this.timers.delete(t); fn(); }, delay);
     this.timers.add(t);
@@ -228,7 +236,7 @@ class Game {
   // question 存在时走质询提示词（不含自己的历史发言 → 前后矛盾风险）
   async _aiSpeak(member, instruction, question) {
     const gen = this.gameGen; // 在途调用标记：期间 reset 的话结果作废
-    this._currentMemberId = member.id; // 供场景指令判断（考官等）
+    const instr = instruction || this._randomInstruction(member); // 同步计算，避免并发串台
     member.typing = true;
     let text = null;
     try {
@@ -242,7 +250,7 @@ class Game {
           ? await mockChat({ persona: member.persona })
           : await chat([{ role: 'user', content: buildChatPrompt({
               persona: member.persona, playerName: this.player.name, topic: this.currentTopicText(),
-              history: this.messages.filter((m) => m.kind === 'chat'), instruction: instruction || this._randomInstruction(),
+              history: this.messages.filter((m) => m.kind === 'chat'), instruction: instr,
               difficulty: this.difficulty, mode: this.mode, isHumanNPC: !!member.humanNPC,
             }) }], { thinking: this.thinking });
       }
@@ -268,9 +276,9 @@ class Game {
     }
   }
 
-  _randomInstruction() {
+  _randomInstruction(member) {
     // 场景模式有自己的指令体系
-    if (this.modeKind === 'scene') return this._sceneInstruction();
+    if (this.modeKind === 'scene') return this._sceneInstruction(member);
     if (this.aiMsgThisRound === 0) {
       if (this.mode === 'reversed') return '聊聊本轮话题，并在发言里顺带宣告你是AI（用你的角色风格说，比如"本人AI，只对数据类话题有反应"这种搞笑宣言也行）。';
       return '聊聊本轮话题，给出你自己的具体经历或观点（一两句即可）。';
@@ -286,10 +294,10 @@ class Game {
   }
 
   // 场景模式（闲聊/备考/参谋）的发言指令
-  _sceneInstruction() {
+  _sceneInstruction(member) {
     const recent = this.messages.filter((m) => m.kind === 'chat');
     const lastPlayer = [...recent].reverse().find((m) => m.from === 'p0');
-    const isExaminer = this.examinerId && this.examinerId === this._currentMemberId;
+    const isExaminer = this.examinerId && this.examinerId === member?.id;
 
     if (this.mode === 'study') {
       if (isExaminer) {

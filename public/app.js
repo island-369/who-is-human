@@ -17,6 +17,7 @@ let chosenMode = 'classic';
 let probeTarget = null;
 let startOpts = { nickname: '无名氏', difficulty: 3, thinking: true };
 let prevPhase = null;
+let roomId = localStorage.getItem('wih_room') || null; // 房间ID：刷新/重连不丢局
 
 const phaseLabel = { chat: '闲聊中', vote: '投票', reveal: '本轮结算', end: '结束', lobby: '准备' };
 
@@ -62,7 +63,11 @@ function esc(s) {
 }
 
 async function api(path, body) {
-  const res = await fetch(path, {
+  let p = path;
+  if (roomId && !path.startsWith('/api/start')) {
+    p += (p.includes('?') ? '&' : '?') + 'room=' + encodeURIComponent(roomId);
+  }
+  const res = await fetch(p, {
     method: body ? 'POST' : 'GET',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
@@ -292,7 +297,11 @@ async function doExit() {
   delete btn.dataset.armed;
   btn.textContent = '退出';
   btn.classList.remove('armed');
-  try { await api('/api/exit', {}); } catch (e) { toast(e.message); }
+  try {
+    await api('/api/exit', {});
+    localStorage.removeItem('wih_room');
+    roomId = null;
+  } catch (e) { toast(e.message); }
 }
 
 async function renderGamesList() {
@@ -372,7 +381,12 @@ function initLobby() {
     try {
       $('startBtn').disabled = true;
       $('startBtn').textContent = '群友入场中…';
-      await api('/api/start', startOpts);
+      const data = await api('/api/start', startOpts);
+      if (data.roomId) {
+        roomId = data.roomId;
+        localStorage.setItem('wih_room', roomId);
+        lastMsgId = 0; // 新房间消息序列从头开始
+      }
     } catch (e) { toast(e.message); }
     $('startBtn').disabled = false;
     $('startBtn').textContent = '进入群聊';

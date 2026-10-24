@@ -9,8 +9,42 @@ const { isMock, MODEL, getUsage } = require('./llm');
 const { DIFFICULTY_STYLES, generateNPCs } = require('./personas');
 
 const PORT = Number(process.env.PORT || 3690);
-const game = new Game();
 const GAMES_DIR = path.join(__dirname, '..', 'games');
+
+// ---------- 多房间管理 ----------
+// 每个浏览器会话一个房间（roomId 贯穿所有请求），空闲超时自动回收
+const rooms = new Map();
+const ROOM_IDLE_MS = Math.max(5, Number(process.env.ROOM_IDLE_MIN || 30)) * 60000;
+const randId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+
+function getRoom(id) {
+  const g = id && rooms.get(id);
+  if (g) g.lastActivity = Date.now();
+  return g || null;
+}
+
+// 无房间（首次进入/房间已被回收）时的默认大厅视图
+function lobbyView() {
+  return {
+    phase: 'lobby', round: 1, topic: '', difficulty: 3, winner: null,
+    mode: 'classic', modeLabel: '经典', modeKind: 'game', roundsTarget: null, goldenTickets: 0,
+    abilities: { probe: 0 }, canVote: false, mock: isMock(),
+    usage: { session: getUsage(), game: { calls: 0, totalTokens: 0, cost: 0 } },
+    members: [], messages: [], voting: null,
+  };
+}
+
+const sweeper = setInterval(() => {
+  const now = Date.now();
+  for (const [id, g] of rooms) {
+    if (now - (g.lastActivity || 0) > ROOM_IDLE_MS) {
+      g.dispose();
+      rooms.delete(id);
+      console.log(`[房间回收] ${id} 空闲超过 ${ROOM_IDLE_MS / 60000} 分钟`);
+    }
+  }
+}, 60000);
+sweeper.unref();
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 
@@ -38,31 +72,43 @@ function readBody(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // ---- API ----
+  // ---- API（room 参数贯穿所有会话级端点） ----
   if (url.pathname === '/api/state' && req.method === 'GET') {
-    return send(res, 200, game.view());
+    const g = getRoom(url.searchParams.get('room'));
+    return send(res, 200, g ? g.view() : lobbyView());
   }
   if (url.pathname === '/api/start' && req.method === 'POST') {
     const body = await readBody(req);
     const difficulty = DIFFICULTY_STYLES[body.difficulty] ? Number(body.difficulty) : 3;
     const aiCount = Math.max(3, Math.min(8, Number(body.aiCount) || 5));
     const npcs = await generateNPCs(aiCount); // 真模型现场生成人设（1次调用），mock/失败回退内置池
-    game.reset(body.nickname, difficulty, body.thinking !== false, aiCount, npcs, body.mode, body.subject);
-    game.start();
-    return send(res, 200, { ok: true, mock: isMock() });
+    const roomId = randId();
+    const g = new Game();
+    g.lastActivity = Date.now();
+    rooms.set(roomId, g);
+    g.reset(body.nickname, difficulty, body.thinking !== false, aiCount, npcs, body.mode, body.subject);
+    g.start();
+    return send(res, 200, { ok: true, roomId, mock: isMock() });
   }
   if (url.pathname === '/api/action' && req.method === 'POST') {
+    const g = getRoom(url.searchParams.get('room'));
+    if (!g) return send(res, 400, { ok: false, error: '房间不存在或已回收，请重新开局' });
     const body = await readBody(req);
     let out = { ok: false, error: '未知操作' };
-    if (body.type === 'say') out = game.playerSay(body.text);
-    else if (body.type === 'probe') out = game.playerProbe(body.target, body.question);
-    else if (body.type === 'vote') out = game.playerVote(body.target);
-    else if (body.type === 'startVote') out = await game.startVote();
+    if (body.type === 'say') out = g.playerSay(body.text);
+    else if (body.type === 'probe') out = g.playerProbe(body.target, body.question);
+    else if (body.type === 'vote') out = g.playerVote(body.target);
+    else if (body.type === 'startVote') out = await g.startVote();
     return send(res, out && out.ok === false ? 400 : 200, out);
   }
-  // 退出对局回大厅：reset 会作废所有在途 AI 调用（gameGen 防护）
+  // 退出对局：销毁房间（在途 AI 调用作废、定时器清空）
   if (url.pathname === '/api/exit' && req.method === 'POST') {
-    game.reset();
+    const id = url.searchParams.get('room');
+    const g = getRoom(id);
+    if (g) {
+      g.dispose();
+      rooms.delete(id);
+    }
     return send(res, 200, { ok: true });
   }
   // 历史对局列表

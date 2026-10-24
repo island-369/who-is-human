@@ -1,14 +1,20 @@
 // 端到端流程验证脚本（配合 MOCK=1 TIMESCALE=0.2 的服务端使用）
 // 用法：MOCK=1 TIMESCALE=0.2 node server/index.js &  node scripts/e2e.mjs
 const BASE = process.env.BASE || 'http://localhost:3690';
+let roomId = null;
 
 const api = async (path, body) => {
-  const res = await fetch(BASE + path, {
+  let url = BASE + path;
+  if (roomId && !path.startsWith('/api/start')) {
+    url += (path.includes('?') ? '&' : '?') + 'room=' + encodeURIComponent(roomId);
+  }
+  const res = await fetch(url, {
     method: body ? 'POST' : 'GET',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (data.roomId) roomId = data.roomId; // 开局响应携带房间ID
   return { status: res.status, data };
 };
 
