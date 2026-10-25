@@ -65,8 +65,19 @@
         </div>
         <button id="startBtn" class="primary-btn">进入群聊</button>
         <p id="lobbyHint" class="hint"></p>
-        <div id="gamesList" class="games-list"></div>
+        <button id="historyBtn" class="history-btn">📜 历史对局</button>
       </div>
+
+    <!-- 历史对局面板 -->
+    <div id="historyOverlay" class="overlay hidden">
+      <div class="history-card">
+        <div class="history-head">
+          <h3>📜 历史对局</h3>
+          <button id="historyClose" class="history-close">关闭</button>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </div>
+    </div>
     </div>
 
     <!-- 质询弹窗 -->

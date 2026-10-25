@@ -106,7 +106,7 @@ function render(s) {
       const ses = s.usage.session || {};
       $('lobbyHint').textContent = `本次运行 API 消耗：${ses.calls || 0} 次调用 · ${ses.totalTokens || 0} tokens · $${(ses.cost || 0).toFixed(4)}（每轮 AI 自动发言上限 16 条）`;
     }
-    if (prevPhase !== 'lobby') renderGamesList(); // 只在回到大厅时刷新一次
+    if (prevPhase !== 'lobby') fetchHistory().then(renderHistoryBadge); // 回大厅时刷新徽标
     prevPhase = 'lobby';
     return;
   }
@@ -286,6 +286,8 @@ async function doProbe() {
 
 // ---------- 退出对局 / 历史对局 ----------
 
+let historyCache = null;
+
 async function doExit() {
   const btn = $('exitBtn');
   if (!btn.dataset.armed) { // 两段确认，防误触
@@ -302,30 +304,68 @@ async function doExit() {
     await api('/api/exit', {});
     localStorage.removeItem('wih_room');
     roomId = null;
+    historyCache = null; // 退出后可能新增未完成局，重新拉取
   } catch (e) { toast(e.message); }
 }
 
-async function renderGamesList() {
-  const el = $('gamesList');
-  try {
-    const list = await api('/api/logs');
-    if (!list.length) { el.innerHTML = ''; return; }
-    el.innerHTML = '<h3>历史对局</h3>' + list.map((g) => {
-      const res = g.winner === 'human' ? '🏆人类胜' : g.winner === 'ai' ? '💀AI胜' : '未完成';
-      const when = (g.startedAt || '').slice(5, 16).replace('T', ' ');
-      return `<div class="games-item" data-file="${esc(g.file)}">
-        <span class="gi-info">${esc(when)} · ${esc(g.nickname)} · ${g.roundCount}轮 · ${res}${g.mock ? ' · MOCK' : ''}${g.thinking ? ' · 思考' : ''}</span>
-        <a class="gi-view" href="/games/${encodeURIComponent(g.md)}" target="_blank">查看</a>
-        <button class="gi-del">删除</button></div>`;
-    }).join('');
-    el.querySelectorAll('.gi-del').forEach((btn) => btn.addEventListener('click', async () => {
-      const file = btn.closest('.games-item').dataset.file;
-      try {
-        await fetch(`/api/logs?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
-        renderGamesList();
-      } catch { toast('删除失败'); }
-    }));
-  } catch { /* 服务未就绪等，忽略 */ }
+async function fetchHistory() {
+  try { historyCache = await api('/api/logs'); }
+  catch { historyCache = historyCache || []; }
+  return historyCache;
+}
+
+function renderHistoryBadge(list) {
+  const n = (list || []).length;
+  $('historyBtn').textContent = n ? `📜 历史对局 · ${n}` : '📜 历史对局';
+  $('historyBtn').classList.toggle('has-items', n > 0);
+}
+
+function renderHistoryList(list) {
+  const el = $('historyList');
+  if (!list.length) {
+    el.innerHTML = '<p class="history-empty">还没有对局记录——去开一局吧。</p>';
+    return;
+  }
+  el.innerHTML = list.map((g) => {
+    const res = g.winner === 'human' ? ['🏆 人类胜', 'res-win']
+      : g.winner === 'ai' ? ['💀 AI 胜', 'res-lose'] : ['未完成', 'res-ongoing'];
+    const when = (g.startedAt || '').slice(5, 16).replace('T', ' ');
+    const subBits = [`${g.modeLabel}`, `难度${g.difficultyLabel || '?'}`];
+    if (g.thinking) subBits.push('思考开');
+    if (g.mock) subBits.push('MOCK');
+    if (g.cost != null && g.cost > 0) subBits.push(`$${g.cost.toFixed(4)}`);
+    else if (g.totalTokens != null && g.totalTokens > 0) subBits.push(`${g.totalTokens} tok`);
+    return `<div class="history-item" data-file="${esc(g.file)}">
+      <div class="hi-main">
+        <span class="hi-date">${esc(when)}</span>
+        <span class="hi-nick">${esc(g.nickname)}</span>
+        <span class="hi-rounds">${g.roundCount} 轮</span>
+        <span class="hi-result ${res[1]}">${res[0]}</span>
+      </div>
+      <div class="hi-sub">${esc(subBits.join(' · '))}</div>
+      <div class="hi-actions">
+        <a class="hi-view" href="/games/${encodeURIComponent(g.md)}" target="_blank">查看复盘</a>
+        <button class="hi-del">删除</button>
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.hi-del').forEach((btn) => btn.addEventListener('click', async () => {
+    const file = btn.closest('.history-item').dataset.file;
+    try {
+      await fetch(`/api/logs?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
+      const list2 = await fetchHistory();
+      renderHistoryBadge(list2);
+      renderHistoryList(list2);
+    } catch { toast('删除失败'); }
+  }));
+}
+
+async function openHistory() {
+  $('historyOverlay').classList.remove('hidden');
+  $('historyList').innerHTML = '<p class="history-empty">加载中…</p>';
+  const list = await fetchHistory();
+  renderHistoryBadge(list);
+  renderHistoryList(list);
 }
 
 // ---------- 大厅 ----------
@@ -411,6 +451,11 @@ function bind() {
   $('probeCancel').addEventListener('click', () => $('probeModal').classList.add('hidden'));
   $('probeGo').addEventListener('click', doProbe);
   $('exitBtn').addEventListener('click', doExit);
+  $('historyBtn').addEventListener('click', openHistory);
+  $('historyClose').addEventListener('click', () => $('historyOverlay').classList.add('hidden'));
+  $('historyOverlay').addEventListener('click', (e) => {
+    if (e.target === $('historyOverlay')) $('historyOverlay').classList.add('hidden'); // 点背景关闭
+  });
 }
 
 async function poll() {

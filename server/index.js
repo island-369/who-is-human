@@ -123,7 +123,8 @@ const server = http.createServer(async (req, res) => {
             file: f, md: f.replace(/\.json$/, '.md'),
             startedAt: d.startedAt, endedAt: d.endedAt, roundCount: d.roundCount, winner: d.winner,
             nickname: d.members?.find((m) => m.isPlayer)?.name || '?',
-            difficultyLabel: d.difficultyLabel, mock: d.mock, thinking: d.thinking,
+            modeLabel: d.modeLabel || '经典', difficultyLabel: d.difficultyLabel, mock: d.mock, thinking: d.thinking,
+            cost: d.usage?.cost ?? null, totalTokens: d.usage?.totalTokens ?? null,
           });
         } catch { /* 跳过损坏文件 */ }
       }
